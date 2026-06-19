@@ -478,6 +478,16 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div id="admin-stats"></div>
     </div>
     <div class="adm-sec">
+      <div class="adm-title">📺 Velocidad del Ticker</div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <input type="range" id="ticker-speed-slider" min="10" max="60" value="25" step="5"
+          style="flex:1;min-width:160px;" oninput="document.getElementById('ticker-speed-val').textContent=this.value+'s'">
+        <span id="ticker-speed-val" style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--gold);min-width:36px">25s</span>
+        <button class="sv-btn" onclick="saveTickerSpeed()">Aplicar velocidad</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">Más segundos = más lento · Menos segundos = más rápido</div>
+    </div>
+    <div class="adm-sec">
       <div class="adm-title">👥 Jugadores</div>
       <div id="admin-users"></div>
     </div>
@@ -2165,9 +2175,17 @@ function initChat(){
   onSnapshot(tickerRef(),snap=>{
     const data=snap.exists()?snap.data():null;
     const queue=data&&Array.isArray(data.queue)?data.queue:[];
+    const speed=data&&data.speed?data.speed:25;
     const tickerEl=document.getElementById('app-ticker');
     const tickerInner=document.getElementById('app-ticker-inner');
     if(!tickerEl||!tickerInner) return;
+    tickerInner.style.animationDuration=speed+'s';
+    const slider=document.getElementById('ticker-speed-slider');
+    if(slider&&document.activeElement!==slider){
+      slider.value=speed;
+      const val=document.getElementById('ticker-speed-val');
+      if(val) val.textContent=speed+'s';
+    }
     if(!queue.length){ tickerEl.style.display='none'; return; }
     const badge=`<span style="background:rgba(0,0,0,0.3);padding:2px 10px;border-radius:10px;margin-right:10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase">🔴 EN VIVO</span>`;
     // Join all messages with name attribution, repeat the sequence so it loops smoothly
@@ -2175,6 +2193,11 @@ function initChat(){
     tickerInner.innerHTML = oneRound + '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + oneRound;
     tickerEl.style.display='block';
   });
+}
+async function saveTickerSpeed(){
+  const speed=parseInt(document.getElementById('ticker-speed-slider').value);
+  await setDoc(tickerRef(),{speed},{merge:true});
+  toast(`Velocidad del ticker: ${speed}s`,'ok');
 }
 function escTickerText(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
@@ -2243,6 +2266,7 @@ window.toggleChat=toggleChat;
 window.sendMessage=sendMessage;
 window.sendQuickReaction=sendQuickReaction;
 window.clearTicker=clearTicker;
+window.saveTickerSpeed=saveTickerSpeed;
 window.sendTicker=sendTicker;
 
 // ── BOOT ───────────────────────────────────────────────────────
