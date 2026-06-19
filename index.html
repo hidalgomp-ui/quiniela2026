@@ -865,14 +865,12 @@ function enterApp(){
   document.getElementById('screen-login').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
   document.getElementById('tb-username').textContent=currentUser.name;
-  if(isAdmin){
-    document.querySelectorAll('.admin-only').forEach(el=>el.style.display='block');
-    document.getElementById('ticker-input-wrap').classList.add('admin-visible');
-  }
+  if(isAdmin) document.querySelectorAll('.admin-only').forEach(el=>el.style.display='block');
+  // Ticker available for everyone 🎙️
+  document.getElementById('ticker-input-wrap').classList.add('admin-visible');
   document.getElementById('chat-fab').style.display='flex';
   renderLeaderboard();renderPredictions();renderSummary();renderChampion();renderAdminStats();renderPartidos();
   if(isAdmin)renderAdmin();
-  // Init chat after a short delay to not block initial render
   setTimeout(initChat, 800);
 }
 function doLogout(){
@@ -1424,6 +1422,7 @@ function renderAdminResults(){
         <div style="display:flex;gap:5px">
           <button class="sv-btn${saved?' saved':''}" id="btn-${m.id}" onclick="saveGroupResult('${m.id}')">${saved?'✓':'Guardar'}</button>
           <button onclick="toggleLive('${m.id}')" style="padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${isLive?'rgba(34,197,94,0.5)':'var(--border)'};background:${isLive?'rgba(34,197,94,0.15)':'transparent'};color:${isLive?'#86EFAC':'var(--muted2)'};">${isLive?'🔴 Vivo':'▶ Vivo'}</button>
+          ${saved?`<button onclick="deleteResult('${m.id}')" style="padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#FCA5A5;">🗑</button>`:''}
         </div>
       </div>`;
     }).join('');
@@ -1449,10 +1448,20 @@ function renderAdminResults(){
             <select class="pen-select" id="ko-${m.id}-pen" style="min-width:120px"><option value="">Sin penalties</option>${mkOpts(res.penWinner)}</select>
           </div>
           <button class="sv-btn${saved?' saved':''}" id="btn-${m.id}" onclick="saveKOResult('${m.id}')">${saved?'✓ Guardado':'Guardar'}</button>
+          ${saved?`<button onclick="deleteResult('${m.id}')" style="padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#FCA5A5;">🗑 Borrar</button>`:''}
         </div>
       </div>`;
     }).join('');
   }
+}
+
+async function deleteResult(id){
+  if(!confirm(`¿Borrar el resultado de ${id}? Esto recalculará los puntos de todos.`)) return;
+  const {deleteField} = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  await updateDoc(resultsRef(), {[id]: deleteField()});
+  delete state.results[id];
+  toast(`Resultado de ${id} borrado 🗑`,'ok');
+  renderAdmin();renderLeaderboard();renderSummary();renderAdminStats();renderPartidos();
 }
 
 async function openPhase(id){
@@ -1973,7 +1982,7 @@ async function toggleLive(id){
 
 window.downloadReport=downloadReport; window.closePhase=closePhase; window.revealPhase=revealPhase; window.hidePhase=hidePhase;
 window.toggleLive=toggleLive;
-window.saveGroupResult=saveGroupResult; window.saveKOResult=saveKOResult;
+window.saveGroupResult=saveGroupResult; window.saveKOResult=saveKOResult; window.deleteResult=deleteResult;
 window.saveChampionResult=saveChampionResult; window.deleteUser=deleteUser;
 window.resetUserPin=resetUserPin; window.changeAccessCode=changeAccessCode;
 window.changeAdminPw=changeAdminPw;
@@ -2264,7 +2273,7 @@ initFirestore()
     <div style="text-align:center;color:var(--muted);font-size:12px;padding:20px">Cargando...</div>
   </div>
   <div class="ticker-input-wrap" id="ticker-input-wrap">
-    <input class="chat-input" id="ticker-input" placeholder="📺 Noticia para el ticker..." maxlength="120"/>
+    <input class="chat-input" id="ticker-input" placeholder="📺 Manda algo al ticker en vivo..." maxlength="120"/>
     <button class="chat-send" style="width:auto;padding:0 12px;border-radius:8px;font-size:11px;font-weight:700;font-family:inherit" onclick="sendTicker()">TICKER</button>
   </div>
   <div class="chat-input-row">
