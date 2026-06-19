@@ -2161,19 +2161,22 @@ function initChat(){
       }
     });
   });
-  // Listen to ticker
+  // Listen to ticker — shows a rotating queue of messages from everyone
   onSnapshot(tickerRef(),snap=>{
-    if(snap.exists()&&snap.data().text){
-      const t=snap.data().text;
-      const tickerEl=document.getElementById('app-ticker');
-      const tickerInner=document.getElementById('app-ticker-inner');
-      if(tickerEl&&tickerInner){
-        tickerInner.innerHTML=`<span style="background:rgba(0,0,0,0.3);padding:2px 10px;border-radius:10px;margin-right:12px;font-size:10px;letter-spacing:.08em;text-transform:uppercase">🔴 EN VIVO</span>${t}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="background:rgba(0,0,0,0.3);padding:2px 10px;border-radius:10px;margin-right:12px;font-size:10px;letter-spacing:.08em;text-transform:uppercase">🔴 EN VIVO</span>${t}`;
-        tickerEl.style.display='block';
-      }
-    }
+    const data=snap.exists()?snap.data():null;
+    const queue=data&&Array.isArray(data.queue)?data.queue:[];
+    const tickerEl=document.getElementById('app-ticker');
+    const tickerInner=document.getElementById('app-ticker-inner');
+    if(!tickerEl||!tickerInner) return;
+    if(!queue.length){ tickerEl.style.display='none'; return; }
+    const badge=`<span style="background:rgba(0,0,0,0.3);padding:2px 10px;border-radius:10px;margin-right:10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase">🔴 EN VIVO</span>`;
+    // Join all messages with name attribution, repeat the sequence so it loops smoothly
+    const oneRound=queue.map(m=>`${badge}${escTickerText(m.text)} <span style="opacity:.65;font-size:10px">— ${m.user}</span>`).join('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;');
+    tickerInner.innerHTML = oneRound + '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' + oneRound;
+    tickerEl.style.display='block';
   });
 }
+function escTickerText(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 function renderChatMessages(msgs){
   const el=document.getElementById('chat-messages');
@@ -2217,10 +2220,21 @@ async function sendQuickReaction(emoji){
 async function sendTicker(){
   const inp=document.getElementById('ticker-input');
   const text=inp.value.trim();
-  if(!text) return;
+  if(!text||!currentUser) return;
   inp.value='';
-  await setDoc(tickerRef(),{text,updatedBy:'Admin',ts:Date.now()},{merge:true});
-  toast('Ticker actualizado 📺','ok');
+  const snap=await getDoc(tickerRef());
+  let queue=snap.exists()&&Array.isArray(snap.data().queue)?snap.data().queue:[];
+  queue.push({text,user:currentUser.name,ts:Date.now()});
+  // Keep only last 10 messages
+  if(queue.length>10) queue=queue.slice(-10);
+  await setDoc(tickerRef(),{queue},{merge:true});
+  toast('Mandado al ticker 📺','ok');
+}
+
+async function clearTicker(){
+  if(!isAdmin) return;
+  await setDoc(tickerRef(),{queue:[]},{merge:true});
+  toast('Ticker limpiado 🗑','ok');
 }
 
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -2228,6 +2242,7 @@ function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(
 window.toggleChat=toggleChat;
 window.sendMessage=sendMessage;
 window.sendQuickReaction=sendQuickReaction;
+window.clearTicker=clearTicker;
 window.sendTicker=sendTicker;
 
 // ── BOOT ───────────────────────────────────────────────────────
@@ -2275,6 +2290,7 @@ initFirestore()
   <div class="ticker-input-wrap" id="ticker-input-wrap">
     <input class="chat-input" id="ticker-input" placeholder="📺 Manda algo al ticker en vivo..." maxlength="120"/>
     <button class="chat-send" style="width:auto;padding:0 12px;border-radius:8px;font-size:11px;font-weight:700;font-family:inherit" onclick="sendTicker()">TICKER</button>
+    <button class="admin-only" id="clear-ticker-btn" style="display:none;width:auto;padding:0 10px;border-radius:8px;font-size:11px;font-weight:700;font-family:inherit;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:#FCA5A5;cursor:pointer;" onclick="clearTicker()">🗑</button>
   </div>
   <div class="chat-input-row">
     <input class="chat-input" id="chat-input" placeholder="Escribe algo..." maxlength="200"
