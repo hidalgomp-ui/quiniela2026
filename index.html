@@ -817,6 +817,7 @@ function isGroupsClosed(){
 }
 function isPhaseOpen(phaseId){
   if(phaseId==='grupos') return !isGroupsClosed();
+  if(phaseId==='champion') return state.phases['champion_open']!==false; // defaults to open
   return state.phases[phaseId+'_open']===true;
 }
 function isPhaseVisible(phaseId){
@@ -1315,13 +1316,33 @@ function renderChampion(){
   if(!currentUser)return;
   const champResult=state.results['__champion__'];
   const cur=document.getElementById('champ-current');
+  const locked = !isAdmin && !isPhaseOpen('champion');
+
+  if(locked){
+    cur.innerHTML = `<div class="phase-locked-banner" style="margin-bottom:14px;">
+      <div class="icon">🔒</div><div class="title">PICKS DE CAMPEÓN CERRADOS</div>
+      <div class="sub">Ya no puedes cambiar tu pick — el admin cerró esta fase</div>
+    </div>`;
+  } else if(currentUser.champion){
+    cur.innerHTML='';
+  } else {
+    cur.innerHTML='';
+  }
+
   if(currentUser.champion){
     const f=ALL_TEAMS_FLAGS[currentUser.champion]||'🏳';
     const correct=champResult===currentUser.champion;
-    cur.innerHTML=`<div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.3);border-radius:12px;padding:14px 18px;display:inline-flex;align-items:center;gap:14px"><span style="font-size:32px">${f}</span><div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Tu pick</div><div style="font-family:'Bebas Neue',sans-serif;font-size:22px">${currentUser.champion}</div></div>${correct?'<span class="tag tag-ok" style="padding:5px 12px;font-size:12px">¡Campeón! 🏆</span>':''}</div>`;
-  }else cur.innerHTML='<div style="color:var(--muted);font-size:13px">Aún no has elegido tu campeón</div>';
+    cur.innerHTML+=`<div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.3);border-radius:12px;padding:14px 18px;display:inline-flex;align-items:center;gap:14px"><span style="font-size:32px">${f}</span><div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">Tu pick</div><div style="font-family:'Bebas Neue',sans-serif;font-size:22px">${currentUser.champion}</div></div>${correct?'<span class="tag tag-ok" style="padding:5px 12px;font-size:12px">¡Campeón! 🏆</span>':''}</div>`;
+  } else if(!locked){
+    cur.innerHTML+='<div style="color:var(--muted);font-size:13px">Aún no has elegido tu campeón</div>';
+  }
+
   document.getElementById('champ-grid').innerHTML=Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>
-    `<div class="cc${currentUser.champion===n?' sel':''}" onclick="pickChampion('${esc(n)}')" ><div class="cc-flag">${f}</div><div class="cc-name">${n}</div></div>`).join('');
+    `<div class="cc${currentUser.champion===n?' sel':''}${locked?' locked':''}" onclick="${locked?'':`pickChampion('${esc(n)}')`}"><div class="cc-flag">${f}</div><div class="cc-name">${n}</div></div>`).join('');
+
+  // Disable save button when locked
+  const saveBtn = document.querySelector('#page-champion .btn-p');
+  if(saveBtn) saveBtn.style.display = locked ? 'none' : 'block';
 }
 function pickChampion(n){currentUser.champion=n;renderChampion();}
 async function saveChampion(){
@@ -1340,6 +1361,7 @@ function renderAdmin(){
 
   const phases=[
     {id:'grupos',   label:'⚽ Grupos',          auto:true},
+    {id:'champion', label:'👑 Pick de Campeón',  auto:false, noVisible:true},
     {id:'r16avos',  label:'🏟 16avos de Final',  auto:false},
     {id:'octavos',  label:'🏟 Octavos de Final', auto:false},
     {id:'cuartos',  label:'🏟 Cuartos de Final', auto:false},
@@ -1376,17 +1398,26 @@ function renderAdmin(){
         : `<button class="btn-open" onclick="openPhase('${ph.id}')">🔓 Abrir</button>`;
     }
 
-    const visBtn=isVisible
-      ? `<button class="btn-close" style="background:rgba(212,175,55,0.1);border-color:rgba(212,175,55,0.3);color:var(--gold)" onclick="hidePhase('${ph.id}')">🙈 Ocultar</button>`
-      : `<button class="btn-open" style="background:rgba(212,175,55,0.1);border-color:rgba(212,175,55,0.3);color:var(--gold)" onclick="revealPhase('${ph.id}')">👁 Revelar</button>`;
+    let extraBtn = '';
+    if(ph.noVisible){
+      // For champion: show count of who hasn't picked instead of a visibility toggle
+      const pending = state.users.filter(u=>u.name!=='Admin'&&!u.champion);
+      extraBtn = pending.length
+        ? `<button onclick="showPendingChampions()" style="padding:6px 14px;background:rgba(249,115,22,0.1);border:1px solid rgba(249,115,22,0.3);color:#FCA87A;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">⚠ ${pending.length} sin elegir</button>`
+        : `<span style="font-size:11px;color:#86EFAC;font-weight:600">✓ Todos eligieron</span>`;
+    } else {
+      extraBtn=isVisible
+        ? `<button class="btn-close" style="background:rgba(212,175,55,0.1);border-color:rgba(212,175,55,0.3);color:var(--gold)" onclick="hidePhase('${ph.id}')">🙈 Ocultar</button>`
+        : `<button class="btn-open" style="background:rgba(212,175,55,0.1);border-color:rgba(212,175,55,0.3);color:var(--gold)" onclick="revealPhase('${ph.id}')">👁 Revelar</button>`;
+    }
 
     html+=`<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
       <div>
         <div style="font-weight:600;font-size:14px">${ph.label}</div>
-        <div style="font-size:11px;color:${isVisible?'var(--gold)':'var(--muted)'};margin-top:2px">${isVisible?'👁 Resumen visible para todos':'🔒 Resumen oculto'}</div>
+        <div style="font-size:11px;color:${ph.noVisible?'var(--muted)':isVisible?'var(--gold)':'var(--muted)'};margin-top:2px">${ph.noVisible?'Visible en pestaña 👁 Resumen':isVisible?'👁 Resumen visible para todos':'🔒 Resumen oculto'}</div>
       </div>
       <div style="text-align:center">${predBtn}</div>
-      <div style="text-align:center">${visBtn}</div>
+      <div style="text-align:center">${extraBtn}</div>
     </div>`;
   });
   pc.innerHTML=html;
@@ -1473,6 +1504,14 @@ async function deleteResult(id){
   toast(`Resultado de ${id} borrado 🗑`,'ok');
   renderAdmin();renderLeaderboard();renderSummary();renderAdminStats();renderPartidos();
 }
+
+function showPendingChampions(){
+  const pending = state.users.filter(u=>u.name!=='Admin'&&!u.champion);
+  if(!pending.length){ toast('Todos ya eligieron su campeón ✓','ok'); return; }
+  const names = pending.map(u=>u.name).join(', ');
+  alert(`Jugadores SIN pick de campeón (${pending.length}):\n\n${names}`);
+}
+window.showPendingChampions = showPendingChampions;
 
 async function openPhase(id){
   await savePhasesToCloud({[id+'_open']:true});
