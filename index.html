@@ -521,15 +521,18 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div class="rule-row"><span>Resultado + ambos marcadores exactos</span><span class="rule-pts">5 PTS</span></div>
     </div>
     <div class="rule-section">
-      <div class="rule-phase">16avos / Octavos / Cuartos — puntos por llave</div>
+      <div class="rule-phase">16avos / Octavos / Cuartos — puntos por llave (basado en marcador predicho)</div>
       <div class="rule-row"><span>Llave completa en posición correcta</span><span class="rule-pts">6 PTS</span></div>
       <div class="rule-row"><span>Un equipo en posición correcta</span><span class="rule-pts">3 PTS</span></div>
       <div class="rule-row"><span>Llave completa invertida</span><span class="rule-pts">2 PTS</span></div>
       <div class="rule-row"><span>+ Llave completa + solo resultado</span><span class="rule-pts">+3 PTS</span></div>
       <div class="rule-row"><span>+ Llave completa + resultado + ambos marcadores</span><span class="rule-pts">+5 PTS</span></div>
       <div class="rule-row"><span>+ Llave completa + resultado + 1 marcador</span><span class="rule-pts">+4 PTS</span></div>
+      <div class="rule-row"><span>+ Un equipo correcto + marcador de ese equipo</span><span class="rule-pts">+2 PTS</span></div>
       <div class="rule-row"><span>+ Un equipo correcto + solo resultado</span><span class="rule-pts">+1 PT</span></div>
-      <div class="rule-row"><span>+ Un equipo correcto + resultado + marcador</span><span class="rule-pts">+2 PTS</span></div>
+      <div class="rule-row"><span>+ Llave invertida + resultado + ambos marcadores</span><span class="rule-pts">+4 PTS</span></div>
+      <div class="rule-row"><span>+ Llave invertida + resultado + 1 marcador</span><span class="rule-pts">+3 PTS</span></div>
+      <div class="rule-row"><span>+ Llave invertida + solo resultado</span><span class="rule-pts">+2 PTS</span></div>
     </div>
     <div class="rule-section">
       <div class="rule-phase">Penalties (si hay empate a 90min) — misma escala sobre lo anterior</div>
@@ -942,27 +945,78 @@ function scoreGroup(pred,res){
   if(ps1===rs1||ps2===rs2)return 4;
   return 3;
 }
+// Determines winner from a score pair {s1,s2} — null if draw or invalid
+function winnerFromScore(s1,s2){
+  const a=parseInt(s1),b=parseInt(s2);
+  if(isNaN(a)||isNaN(b))return null;
+  if(a===b)return 0; // draw
+  return a>b?1:2;
+}
+
+// Full scoreKO per Qatar 2022 reglamento — based on predicted score, not just team pick
 function scoreKO(pred,res,pts){
   if(!pred||!res)return 0;
   const pn1=pred.n1||'',pn2=pred.n2||'',rn1=res.n1||'',rn2=res.n2||'';
+  if(!pn1||!pn2||!rn1||!rn2)return 0;
+
   let p=0;
-  const full=pn1===rn1&&pn2===rn2;
-  const inv=pn1===rn2&&pn2===rn1;
-  const one=(pn1===rn1&&pn2!==rn2)||(pn2===rn2&&pn1!==rn1);
+  const full=pn1===rn1&&pn2===rn2;       // both teams in correct slot
+  const inv=pn1===rn2&&pn2===rn1;        // both teams but swapped
+  const one=(pn1===rn1&&pn2!==rn2)||(pn2===rn2&&pn1!==rn1); // one team correct
+
+  // ── Llave position points ──
   if(full)p+=pts.full;
   else if(inv)p+=pts.inv;
   else if(one)p+=pts.one;
-  // Penalties bonus (ganador correcto + marcador exacto extra)
-  if(res.penWinner&&pred.penPick){
-    const penCorrect=pred.penPick===res.penWinner;
-    if(full&&penCorrect)p+=3;
-    else if(one&&penCorrect)p+=1;
-    else if(inv&&penCorrect)p+=2;
-    // Extra bonus if penalty scoreline is exact too
-    if(penCorrect && res.penS1!==undefined && res.penS1!==null &&
-       pred.penS1!==undefined && pred.penS1!=='' &&
-       parseInt(pred.penS1)===parseInt(res.penS1) && parseInt(pred.penS2)===parseInt(res.penS2)){
-      p+=1;
+  else return 0; // no team matched, no points at all
+
+  // ── Resultado/marcador bonus (only if we have predicted scores) ──
+  const ps1=pred.s1, ps2=pred.s2, rs1=res.s1, rs2=res.s2;
+  const hasPredScore = ps1!==undefined && ps1!=='' && ps2!==undefined && ps2!=='';
+  const hasResScore  = rs1!==undefined && rs1!==null && rs2!==undefined && rs2!==null;
+
+  if(hasPredScore && hasResScore){
+    const a1=parseInt(ps1),a2=parseInt(ps2),b1=parseInt(rs1),b2=parseInt(rs2);
+    if(full){
+      // predicted score is for (n1,n2) in the same order as result
+      const sameWinner = winnerFromScore(a1,a2)===winnerFromScore(b1,b2);
+      if(sameWinner){
+        if(a1===b1&&a2===b2)p+=5;
+        else if(a1===b1||a2===b2)p+=4;
+        else p+=3;
+      }
+    } else if(inv){
+      // predicted score is inverted — compare swapped
+      const sameWinnerInv = winnerFromScore(a2,a1)===winnerFromScore(b1,b2);
+      if(sameWinnerInv){
+        if(a2===b1&&a1===b2)p+=4;
+        else if(a2===b1||a1===b2)p+=3;
+        else p+=2;
+      }
+    } else if(one){
+      // only one team correct — score bonus uses that team's position
+      const correctIsN1 = pn1===rn1;
+      // Compare the goals of the matched team only
+      const predGoalsForMatched = correctIsN1 ? a1 : a2;
+      const resGoalsForMatched  = correctIsN1 ? b1 : b2;
+      if(predGoalsForMatched===resGoalsForMatched) p+=2;
+      else p+=1;
+    }
+  }
+
+  // ── Penalties bonus (same scale, applied additionally if there's a shootout) ──
+  if(res.penWinner && pred.penPick){
+    const penCorrect = pred.penPick===res.penWinner;
+    if(penCorrect){
+      if(full)p+=3;
+      else if(one)p+=1;
+      else if(inv)p+=2;
+      // Exact penalty scoreline bonus
+      if(res.penS1!==undefined && res.penS1!==null &&
+         pred.penS1!==undefined && pred.penS1!=='' &&
+         parseInt(pred.penS1)===parseInt(res.penS1) && parseInt(pred.penS2)===parseInt(res.penS2)){
+        p+=1;
+      }
     }
   }
   return p;
@@ -1112,7 +1166,7 @@ function renderPredContent(user,readOnly){
       return;
     }
     if(open&&!readOnly){
-      html+=`<div class="phase-open-banner"><div class="title">🟢 ${ph.label.toUpperCase()} ABIERTO</div><div class="sub">Puedes editar equipos y resultados — se cierra cuando el admin lo indique</div></div>`;
+      html+=`<div class="phase-open-banner"><div class="title">🟢 ${ph.label.toUpperCase()} ABIERTO</div><div class="sub">Cambia los equipos si quieres y predice el marcador — si hay empate, agrega penalties. Se cierra cuando el admin lo indique</div></div>`;
     }
     html+=`<div class="phase-block"><div class="phase-hdr" style="border-left-color:var(--red)">${ph.label} <span class="tag tag-ko">Llave completa: ${ph.pts.full}pts</span></div><div class="match-grid">`;
 
@@ -1136,7 +1190,7 @@ function renderPredContent(user,readOnly){
 
       let cls='',badge='';
       if(res&&pred.n1){
-        const sc=scoreKO({n1:predN1,n2:predN2,penPick:pred.penPick},res,ph.pts);
+        const sc=scoreKO({...pred,n1:predN1,n2:predN2},res,ph.pts);
         if(sc>0){cls='correct';badge=`<span class="tag tag-ok">+${sc}pts</span>`;}
         else{cls='wrong';badge=`<span class="tag tag-err">0pts</span>`;}
       }
@@ -1145,12 +1199,10 @@ function renderPredContent(user,readOnly){
       const teamOpts=Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>`<option value="${n}" ${predN1===n?'selected':''}>${f} ${n}</option>`).join('');
       const teamOpts2=Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>`<option value="${n}" ${predN2===n?'selected':''}>${f} ${n}</option>`).join('');
 
-      // Penalty field — show if user predicts draw (can't know yet) or if result is draw
-      const predDraw=pred.n1&&pred.n1===pred.n2; // shouldn't happen
-      const resDraw=res&&res.s1===res.s2;
-      const showPenField=(!res&&!locked)||resDraw; // show when editing or when result is draw
-      const penOpts=[dispN1,dispN2].map(n=>`<option value="${n}" ${pred.penPick===n?'selected':''}>${ALL_TEAMS_FLAGS[n]||''} ${n}</option>`).join('');
-      const penActualOpts=res?[res.n1,res.n2].map(n=>`<option value="${n}" ${pred.penPick===n?'selected':''}>${ALL_TEAMS_FLAGS[n]||''} ${n}</option>`).join(''):penOpts;
+      // Penalty field — ONLY shown when the user's own predicted score is a draw
+      const predIsDraw = pred.s1!==undefined && pred.s1!=='' && pred.s2!==undefined && pred.s2!=='' && parseInt(pred.s1)===parseInt(pred.s2);
+      const showPenField = predIsDraw && !locked;
+      const penOpts=[predN1,predN2].map(n=>`<option value="${n}" ${pred.penPick===n?'selected':''}>${ALL_TEAMS_FLAGS[n]||''} ${n}</option>`).join('');
 
       html+=`<div class="ko-card ${cls}">
         <div class="ko-row">
@@ -1161,10 +1213,14 @@ function renderPredContent(user,readOnly){
             </select>
           </div>
           <div class="ko-center">
-            <div class="ko-vs">VS</div>
+            <div class="si-row">
+              <input class="si" style="width:36px;height:34px;font-size:15px" type="number" min="0" max="20" value="${pred.s1??''}" ${dis} oninput="setKOPredAndRefresh('${m.id}','s1',this.value)" placeholder="-"/>
+              <span class="ssep">:</span>
+              <input class="si" style="width:36px;height:34px;font-size:15px" type="number" min="0" max="20" value="${pred.s2??''}" ${dis} oninput="setKOPredAndRefresh('${m.id}','s2',this.value)" placeholder="-"/>
+            </div>
             <div class="mi">${m.date}</div>
             <div class="mi">${m.venue}</div>
-            ${res?`<div class="res-result">${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1||''} ${res.penWinner?'(pen.)':''}</div>`:''}
+            ${res?`<div class="res-result">${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1||''} ${res.s1!==undefined?`${res.s1}-${res.s2}`:''} ${res.penWinner?'(pen.)':''}</div>`:''}
             ${badge}
           </div>
           <div class="ko-team r">
@@ -1174,10 +1230,10 @@ function renderPredContent(user,readOnly){
             </select>
           </div>
         </div>
-        ${showPenField&&!locked?`<div class="pen-row">
-          <span class="pen-label">🥅 Si hay empate, gana por penalties:</span>
+        ${showPenField?`<div class="pen-row">
+          <span class="pen-label">🥅 Empate — gana por penalties:</span>
           <select class="pen-select" ${dis} onchange="setKOPred('${m.id}','penPick',this.value)">
-            <option value="">— Elige ganador —</option>${penActualOpts}
+            <option value="">— Elige ganador —</option>${penOpts}
           </select>
           <span style="font-size:11px;color:var(--muted2);margin-left:6px">Marcador pen:</span>
           <input class="si" style="width:32px;height:30px;font-size:13px" type="number" min="0" max="20" value="${pred.penS1??''}" ${dis} oninput="setKOPred('${m.id}','penS1',this.value)" placeholder="-"/>
@@ -1198,6 +1254,22 @@ function renderPredContent(user,readOnly){
   }
 }
 
+// Returns the actual winner team name of a finished KO match, or null if not decided yet
+function getKOWinner(r){
+  if(!r||!r.n1||!r.n2) return null;
+  if(r.s1===undefined||r.s1===null||r.s2===undefined||r.s2===null) return null;
+  const s1=parseInt(r.s1),s2=parseInt(r.s2);
+  if(s1>s2) return r.n1;
+  if(s2>s1) return r.n2;
+  // Draw — decided by penalties
+  return r.penWinner||null;
+}
+function getKOLoser(r){
+  const w=getKOWinner(r);
+  if(!w||!r) return null;
+  return w===r.n1?r.n2:r.n1;
+}
+
 function resolveKOSlot(slot,results,gPos,top8thirds){
   if(!slot)return null;
   // Direct position like 1A, 2B, 3C
@@ -1205,9 +1277,19 @@ function resolveKOSlot(slot,results,gPos,top8thirds){
   if(gpMatch)return gPos[slot]||{name:slot,flag:'❓'};
   // 3rd place slots
   if(slot.startsWith('3rd_')){const idx=parseInt(slot.split('_')[1])-1;return top8thirds[idx]||{name:`3er mejor #${idx+1}`,flag:'❓'};}
-  // Winner of previous match
-  if(slot.startsWith('W_')){const mid=slot.replace('W_','');const r=results[mid];if(r&&r.n1){return{name:r.n1,flag:ALL_TEAMS_FLAGS[r.n1]||'❓'};}return{name:slot,flag:'❓'};}
-  if(slot.startsWith('L_')){const mid=slot.replace('L_','');const r=results[mid];if(r&&r.n2){return{name:r.n2,flag:ALL_TEAMS_FLAGS[r.n2]||'❓'};}return{name:slot,flag:'❓'};}
+  // Winner of previous match — derived from actual score, not assumed
+  if(slot.startsWith('W_')){
+    const mid=slot.replace('W_','');const r=results[mid];
+    const w=getKOWinner(r);
+    if(w) return{name:w,flag:ALL_TEAMS_FLAGS[w]||'❓'};
+    return{name:slot,flag:'❓'};
+  }
+  if(slot.startsWith('L_')){
+    const mid=slot.replace('L_','');const r=results[mid];
+    const l=getKOLoser(r);
+    if(l) return{name:l,flag:ALL_TEAMS_FLAGS[l]||'❓'};
+    return{name:slot,flag:'❓'};
+  }
   return{name:slot,flag:'❓'};
 }
 
@@ -1233,6 +1315,18 @@ function setKOPred(id,field,val){
   currentUser.koPreds[id][field]=val;
   _hasPendingChanges=true;
   document.getElementById('pred-save-info').textContent='● Sin guardar';
+}
+let _koRefreshTimer=null;
+function setKOPredAndRefresh(id,field,val){
+  setKOPred(id,field,val);
+  clearTimeout(_koRefreshTimer);
+  _koRefreshTimer=setTimeout(()=>{
+    // Re-render the whole prediction content to show/hide the penalty field
+    // based on whether the newly typed score is a draw. We preserve scroll position.
+    const sy=window.scrollY;
+    renderPredContent(currentUser,false);
+    window.scrollTo(0,sy);
+  },650);
 }
 async function savePredictions(){
   const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
@@ -1512,17 +1606,18 @@ function renderAdminResults(){
       const res=state.results[m.id]||{};const saved=!!res.n1;
       return`<div class="ko-res-card">
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${m.id} · ${m.date} · ${m.venue}</div>
-        <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin-bottom:8px">
+        <div style="display:grid;grid-template-columns:1fr auto auto auto 1fr;gap:8px;align-items:center;margin-bottom:8px">
           <select class="ko-select" id="ko-${m.id}-n1"><option value="">— Equipo 1 —</option>${mkOpts(res.n1)}</select>
-          <span style="color:var(--muted);font-weight:700;font-size:18px">vs</span>
+          <input class="ri" style="width:40px;height:36px" type="number" min="0" max="20" id="ko-${m.id}-s1" value="${res.s1??''}" placeholder="-"/>
+          <span style="color:var(--muted);font-weight:700">-</span>
+          <input class="ri" style="width:40px;height:36px" type="number" min="0" max="20" id="ko-${m.id}-s2" value="${res.s2??''}" placeholder="-"/>
           <select class="ko-select" id="ko-${m.id}-n2"><option value="">— Equipo 2 —</option>${mkOpts(res.n2)}</select>
         </div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:8px">Marcador en tiempo regular (90 min). El ganador se calcula solo a partir de este marcador — si hay empate, completa penalties abajo.</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:12px;color:var(--muted2)">Ganador:</span>
-          <select class="ko-select" style="width:auto;flex:1" id="ko-${m.id}-winner"><option value="">— Ganó —</option>${mkOpts(res.n1)}</select>
           <div style="background:rgba(200,16,46,0.1);border:1px solid rgba(200,16,46,0.2);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span style="font-size:11px;color:#FF8080;font-weight:700">🥅 Penalties:</span>
-            <select class="pen-select" id="ko-${m.id}-pen" style="min-width:120px"><option value="">Sin penalties</option>${mkOpts(res.penWinner)}</select>
+            <span style="font-size:11px;color:#FF8080;font-weight:700">🥅 Si empató, gana por penalties:</span>
+            <select class="pen-select" id="ko-${m.id}-pen" style="min-width:120px"><option value="">— Elige ganador —</option>${mkOpts(res.penWinner)}</select>
             <input class="ri" style="width:36px;height:32px;font-size:14px" type="number" min="0" max="20" id="ko-${m.id}-pens1" value="${res.penS1??''}" placeholder="-"/>
             <span style="color:var(--muted)">-</span>
             <input class="ri" style="width:36px;height:32px;font-size:14px" type="number" min="0" max="20" id="ko-${m.id}-pens2" value="${res.penS2??''}" placeholder="-"/>
@@ -1580,15 +1675,24 @@ async function saveGroupResult(id){
 async function saveKOResult(id){
   const n1=document.getElementById(`ko-${id}-n1`).value;
   const n2=document.getElementById(`ko-${id}-n2`).value;
+  const s1=document.getElementById(`ko-${id}-s1`).value;
+  const s2=document.getElementById(`ko-${id}-s2`).value;
   const penWinner=document.getElementById(`ko-${id}-pen`).value||null;
   const penS1=document.getElementById(`ko-${id}-pens1`).value;
   const penS2=document.getElementById(`ko-${id}-pens2`).value;
+
   if(!n1||!n2){toast('Selecciona ambos equipos','err');return;}
-  // Winner is the one that progresses (penalties winner if draw)
+  if(s1===''||s2===''){toast('Ingresa el marcador de 90 minutos','err');return;}
+
+  const isDraw = parseInt(s1)===parseInt(s2);
+  if(isDraw && !penWinner){toast('Empate a 90min — selecciona el ganador de penalties','err');return;}
+
   await saveResultToCloud(id,{
-    n1,n2,penWinner:penWinner||null,
-    penS1:penS1!==''?parseInt(penS1):null,
-    penS2:penS2!==''?parseInt(penS2):null
+    n1,n2,
+    s1:parseInt(s1),s2:parseInt(s2),
+    penWinner:isDraw?(penWinner||null):null,
+    penS1:isDraw&&penS1!==''?parseInt(penS1):null,
+    penS2:isDraw&&penS2!==''?parseInt(penS2):null
   });
   const btn=document.getElementById('btn-'+id);if(btn){btn.textContent='✓ Guardado';btn.classList.add('saved');}
   toast('Resultado KO guardado ✓','ok');
@@ -2091,7 +2195,7 @@ window.showAdminLogin=showAdminLogin; window.showUserLogin=showUserLogin;
 window.checkUserExists=checkUserExists; window.showPage=showPage;
 window.savePredictions=savePredictions; window.saveChampion=saveChampion;
 window.pickChampion=pickChampion; window.setPred=setPred;
-window.setPredAndRefresh=setPredAndRefresh; window.setKOPred=setKOPred;
+window.setPredAndRefresh=setPredAndRefresh; window.setKOPred=setKOPred; window.setKOPredAndRefresh=setKOPredAndRefresh;
 window.adminViewPreds=adminViewPreds; window.setSumPhase=setSumPhase;
 window.setSumGrp=setSumGrp; window.setAdminPhase=setAdminPhase;
 window.downloadMyQuiniela=downloadMyQuiniela;
