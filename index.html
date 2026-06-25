@@ -536,6 +536,7 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div class="rule-row"><span>Llave completa + ganador penalties</span><span class="rule-pts">+3 PTS</span></div>
       <div class="rule-row"><span>Un equipo correcto + ganador penalties</span><span class="rule-pts">+1 PT</span></div>
       <div class="rule-row"><span>Llave invertida + ganador penalties</span><span class="rule-pts">+2 PTS</span></div>
+      <div class="rule-row"><span>Extra: marcador exacto de penalties (ej. 4-3)</span><span class="rule-pts">+1 PT</span></div>
     </div>
     <div class="rule-section">
       <div class="rule-phase">Semifinales</div>
@@ -699,26 +700,28 @@ const R16AVOs = [
   {id:'M88',date:'Jul 3', venue:'Dallas',          s1:'2D',     s2:'2G'},
 ];
 
-// R16 path (verified from FIFA bracket)
+// R16 path (verified from Sky Sports official bracket — Jul 4-7)
 const OCTAVOS = [
-  {id:'M89',date:'Jul 4',venue:'Houston',      s1:'W_M74',s2:'W_M77'},
-  {id:'M90',date:'Jul 4',venue:'Philadelphia', s1:'W_M73',s2:'W_M75'},
-  {id:'M91',date:'Jul 5',venue:'MetLife, NJ',  s1:'W_M78',s2:'W_M88'},
+  {id:'M89',date:'Jul 4',venue:'Philadelphia', s1:'W_M74',s2:'W_M77'},
+  {id:'M90',date:'Jul 4',venue:'Houston',      s1:'W_M73',s2:'W_M75'},
+  {id:'M91',date:'Jul 5',venue:'MetLife, NJ',  s1:'W_M76',s2:'W_M78'},
   {id:'M92',date:'Jul 5',venue:'Azteca, CDMX', s1:'W_M79',s2:'W_M80'},
-  {id:'M93',date:'Jul 6',venue:'Dallas',       s1:'W_M81',s2:'W_M82'},
-  {id:'M94',date:'Jul 6',venue:'Seattle',      s1:'W_M83',s2:'W_M85'},
-  {id:'M95',date:'Jul 7',venue:'Atlanta',      s1:'W_M84',s2:'W_M86'},
-  {id:'M96',date:'Jul 7',venue:'Vancouver',    s1:'W_M76',s2:'W_M87'},
+  {id:'M93',date:'Jul 6',venue:'Arlington',    s1:'W_M83',s2:'W_M84'},
+  {id:'M94',date:'Jul 6',venue:'Seattle',      s1:'W_M81',s2:'W_M82'},
+  {id:'M95',date:'Jul 7',venue:'Atlanta',      s1:'W_M86',s2:'W_M88'},
+  {id:'M96',date:'Jul 7',venue:'Vancouver',    s1:'W_M85',s2:'W_M87'},
 ];
+// Quarterfinals (verified Sky Sports — Jul 9-11)
 const CUARTOS = [
   {id:'M97',date:'Jul 9', venue:'Foxborough',  s1:'W_M89',s2:'W_M90'},
   {id:'M98',date:'Jul 10',venue:'SoFi, LA',    s1:'W_M91',s2:'W_M92'},
   {id:'M99',date:'Jul 11',venue:'Miami',       s1:'W_M93',s2:'W_M94'},
   {id:'M100',date:'Jul 11',venue:'Kansas City',s1:'W_M95',s2:'W_M96'},
 ];
+// Semifinals (verified — Jul 14-15)
 const SEMIS = [
-  {id:'M101',date:'Jul 14',venue:'Dallas',    s1:'W_M97',s2:'W_M98'},
-  {id:'M102',date:'Jul 15',venue:'MetLife',   s1:'W_M99',s2:'W_M100'},
+  {id:'M101',date:'Jul 14',venue:'Arlington', s1:'W_M97',s2:'W_M98'},
+  {id:'M102',date:'Jul 15',venue:'Atlanta',   s1:'W_M99',s2:'W_M100'},
 ];
 const TERCERO = [{id:'M103',date:'Jul 18',venue:'Miami',s1:'L_M101',s2:'L_M102'}];
 const FINAL   = [{id:'M104',date:'Jul 19',venue:'MetLife, NJ',s1:'W_M101',s2:'W_M102'}];
@@ -802,7 +805,10 @@ async function initFirestore(){
     if(snap.exists()){
       state.phases=snap.data();
       renderLeaderboard();renderSummary();renderPartidos();
-      if(currentUser&&!_hasPendingChanges) renderPredictions();
+      // Always re-render predictions when phase state changes — this unlocks/locks
+      // sections for users in real time. We preserve pending group-stage inputs
+      // by re-rendering only if the user isn't actively mid-edit on a visible input.
+      if(currentUser) renderPredictions();
       if(isAdmin)renderAdmin();
     }
   });
@@ -926,12 +932,18 @@ function scoreKO(pred,res,pts){
   if(full)p+=pts.full;
   else if(inv)p+=pts.inv;
   else if(one)p+=pts.one;
-  // Penalties bonus (ganador correcto)
+  // Penalties bonus (ganador correcto + marcador exacto extra)
   if(res.penWinner&&pred.penPick){
     const penCorrect=pred.penPick===res.penWinner;
     if(full&&penCorrect)p+=3;
     else if(one&&penCorrect)p+=1;
     else if(inv&&penCorrect)p+=2;
+    // Extra bonus if penalty scoreline is exact too
+    if(penCorrect && res.penS1!==undefined && res.penS1!==null &&
+       pred.penS1!==undefined && pred.penS1!=='' &&
+       parseInt(pred.penS1)===parseInt(res.penS1) && parseInt(pred.penS2)===parseInt(res.penS2)){
+      p+=1;
+    }
   }
   return p;
 }
@@ -1147,8 +1159,12 @@ function renderPredContent(user,readOnly){
           <select class="pen-select" ${dis} onchange="setKOPred('${m.id}','penPick',this.value)">
             <option value="">— Elige ganador —</option>${penActualOpts}
           </select>
+          <span style="font-size:11px;color:var(--muted2);margin-left:6px">Marcador pen:</span>
+          <input class="si" style="width:32px;height:30px;font-size:13px" type="number" min="0" max="20" value="${pred.penS1??''}" ${dis} oninput="setKOPred('${m.id}','penS1',this.value)" placeholder="-"/>
+          <span style="color:var(--muted)">-</span>
+          <input class="si" style="width:32px;height:30px;font-size:13px" type="number" min="0" max="20" value="${pred.penS2??''}" ${dis} oninput="setKOPred('${m.id}','penS2',this.value)" placeholder="-"/>
         </div>`:''}
-        ${res&&res.penWinner?`<div class="pen-row"><span class="pen-label">🥅 Ganó por penalties:</span><span style="font-size:13px;font-weight:600;color:var(--text)">${ALL_TEAMS_FLAGS[res.penWinner]||''} ${res.penWinner}</span>${pred.penPick===res.penWinner?`<span class="tag tag-ok" style="margin-left:auto">Acertaste</span>`:`<span class="tag tag-err" style="margin-left:auto">Fallaste</span>`}</div>`:''}
+        ${res&&res.penWinner?`<div class="pen-row"><span class="pen-label">🥅 Ganó por penalties:</span><span style="font-size:13px;font-weight:600;color:var(--text)">${ALL_TEAMS_FLAGS[res.penWinner]||''} ${res.penWinner}${res.penS1!==undefined&&res.penS1!==null?` (${res.penS1}-${res.penS2})`:''}</span>${pred.penPick===res.penWinner?`<span class="tag tag-ok" style="margin-left:auto">Ganador ✓${pred.penS1==res.penS1&&pred.penS2==res.penS2?' +marcador exacto':''}</span>`:`<span class="tag tag-err" style="margin-left:auto">Fallaste</span>`}</div>`:''}
       </div>`;
     });
     html+='</div></div>';
@@ -1484,9 +1500,12 @@ function renderAdminResults(){
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:12px;color:var(--muted2)">Ganador:</span>
           <select class="ko-select" style="width:auto;flex:1" id="ko-${m.id}-winner"><option value="">— Ganó —</option>${mkOpts(res.n1)}</select>
-          <div style="background:rgba(200,16,46,0.1);border:1px solid rgba(200,16,46,0.2);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:8px">
+          <div style="background:rgba(200,16,46,0.1);border:1px solid rgba(200,16,46,0.2);border-radius:8px;padding:6px 10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="font-size:11px;color:#FF8080;font-weight:700">🥅 Penalties:</span>
             <select class="pen-select" id="ko-${m.id}-pen" style="min-width:120px"><option value="">Sin penalties</option>${mkOpts(res.penWinner)}</select>
+            <input class="ri" style="width:36px;height:32px;font-size:14px" type="number" min="0" max="20" id="ko-${m.id}-pens1" value="${res.penS1??''}" placeholder="-"/>
+            <span style="color:var(--muted)">-</span>
+            <input class="ri" style="width:36px;height:32px;font-size:14px" type="number" min="0" max="20" id="ko-${m.id}-pens2" value="${res.penS2??''}" placeholder="-"/>
           </div>
           <button class="sv-btn${saved?' saved':''}" id="btn-${m.id}" onclick="saveKOResult('${m.id}')">${saved?'✓ Guardado':'Guardar'}</button>
           ${saved?`<button onclick="deleteResult('${m.id}')" style="padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:#FCA5A5;">🗑 Borrar</button>`:''}
@@ -1542,9 +1561,15 @@ async function saveKOResult(id){
   const n1=document.getElementById(`ko-${id}-n1`).value;
   const n2=document.getElementById(`ko-${id}-n2`).value;
   const penWinner=document.getElementById(`ko-${id}-pen`).value||null;
+  const penS1=document.getElementById(`ko-${id}-pens1`).value;
+  const penS2=document.getElementById(`ko-${id}-pens2`).value;
   if(!n1||!n2){toast('Selecciona ambos equipos','err');return;}
   // Winner is the one that progresses (penalties winner if draw)
-  await saveResultToCloud(id,{n1,n2,penWinner:penWinner||null});
+  await saveResultToCloud(id,{
+    n1,n2,penWinner:penWinner||null,
+    penS1:penS1!==''?parseInt(penS1):null,
+    penS2:penS2!==''?parseInt(penS2):null
+  });
   const btn=document.getElementById('btn-'+id);if(btn){btn.textContent='✓ Guardado';btn.classList.add('saved');}
   toast('Resultado KO guardado ✓','ok');
 }
@@ -1593,7 +1618,7 @@ function buildStats(){
   // Per-user stats
   const userStats = users.map(u=>{
     const preds = u.predictions||{};
-    let exactos=0, resultados=0, jugados=0, streak=0, maxStreak=0, curStreak=0;
+    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0, streak=0, maxStreak=0, curStreak=0;
     const matchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]);
     matchesWithResult.forEach(m=>{
       const pred=preds[m.id];
@@ -1602,7 +1627,8 @@ function buildStats(){
       jugados++;
       const sc=scoreGroup(pred,res);
       if(sc===5){exactos++;resultados++;curStreak++;}
-      else if(sc>=3){resultados++;curStreak++;}
+      else if(sc===4){cuatros++;resultados++;curStreak++;}
+      else if(sc===3){soloResultado++;resultados++;curStreak++;}
       else{curStreak=0;}
       maxStreak=Math.max(maxStreak,curStreak);
     });
@@ -1610,9 +1636,10 @@ function buildStats(){
     return{
       name:u.name,
       total:pts.total, grp:pts.grp, ko:pts.ko, champ:pts.champ,
-      exactos, resultados, jugados,
+      exactos, cuatros, soloResultado, resultados, jugados,
       pctAcierto: jugados>0?Math.round(resultados/jugados*100):0,
       pctExacto: jugados>0?Math.round(exactos/jugados*100):0,
+      pctCuatro: jugados>0?Math.round(cuatros/jugados*100):0,
       maxStreak,
       champion:u.champion||'—'
     };
@@ -1704,7 +1731,7 @@ function renderStatsTo(elId){
 
     <!-- Ranking marcadores exactos -->
     <div>
-      <div style="font-size:11px;font-weight:700;color:#FCA87A;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🎯 Marcadores exactos</div>
+      <div style="font-size:11px;font-weight:700;color:#FCA87A;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🎯 Marcadores exactos (5pts)</div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
           <td style="padding:4px 6px">#</td><td style="padding:4px 6px">Jugador</td>
@@ -1716,6 +1743,24 @@ function renderStatsTo(elId){
           <td style="padding:5px 6px;font-weight:600">${u.name}</td>
           <td style="padding:5px 6px;text-align:center;color:#FCA87A;font-weight:700">${u.exactos}<span style="color:var(--muted);font-weight:400">/${u.jugados}</span></td>
           <td style="padding:5px 6px;text-align:center;color:${u.pctExacto>=30?'#FCA87A':'var(--muted2)'};font-weight:700">${u.pctExacto}%</td>
+        </tr>`).join('')}
+      </table>
+    </div>
+
+    <!-- Ranking marcadores parciales (4 puntos) -->
+    <div>
+      <div style="font-size:11px;font-weight:700;color:#93C5FD;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🥈 Marcadores parciales (4pts)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          <td style="padding:4px 6px">#</td><td style="padding:4px 6px">Jugador</td>
+          <td style="padding:4px 6px;text-align:center">4pts</td>
+          <td style="padding:4px 6px;text-align:center">% 4pts</td>
+        </tr>
+        ${[...s.userStats].sort((a,b)=>b.cuatros-a.cuatros).map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+          <td style="padding:5px 6px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+          <td style="padding:5px 6px;font-weight:600">${u.name}</td>
+          <td style="padding:5px 6px;text-align:center;color:#93C5FD;font-weight:700">${u.cuatros}<span style="color:var(--muted);font-weight:400">/${u.jugados}</span></td>
+          <td style="padding:5px 6px;text-align:center;color:${u.pctCuatro>=30?'#93C5FD':'var(--muted2)'};font-weight:700">${u.pctCuatro}%</td>
         </tr>`).join('')}
       </table>
     </div>
@@ -1799,6 +1844,10 @@ function downloadReport(){
     <td>${i+1}</td><td>${u.name}</td><td>${u.exactos}/${u.jugados}</td><td class="pts">${u.pctExacto}%</td>
   </tr>`).join('');
 
+  const rankingCuatro=[...s.userStats].sort((a,b)=>b.cuatros-a.cuatros).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td>${u.cuatros}/${u.jugados}</td><td class="pts">${u.pctCuatro}%</td>
+  </tr>`).join('');
+
   const rankingStreak=[...s.userStats].sort((a,b)=>b.maxStreak-a.maxStreak).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
     <td>${i+1}</td><td>${u.name}</td><td class="pts">${u.maxStreak} 🔥</td>
   </tr>`).join('');
@@ -1873,9 +1922,13 @@ function downloadReport(){
     <div class="grid">
       ${tableSection('🏆 Tabla de posiciones','#D4AF37',rankingPts,['#','Jugador','Grupos','KO','Campeón','Pts'])}
       ${tableSection('✅ Más resultados acertados','#86EFAC',rankingRes,['#','Jugador','Aciertos','% Acierto'])}
-      ${tableSection('🎯 Más marcadores exactos','#FCA87A',rankingExact,['#','Jugador','Exactos','% Exacto'])}
+    </div>
+    <div class="grid">
+      ${tableSection('🎯 Marcadores exactos (5pts)','#FCA87A',rankingExact,['#','Jugador','Exactos','% Exacto'])}
+      ${tableSection('🥈 Marcadores parciales (4pts)','#93C5FD',rankingCuatro,['#','Jugador','4pts','% 4pts'])}
       ${tableSection('🔥 Mayor racha de aciertos','#93C5FD',rankingStreak,['#','Jugador','Racha máx.'])}
     </div>
+    <style>.grid:nth-of-type(2){grid-template-columns:1fr 1fr 1fr}</style>
     ${s.matchStats.length?`<div class="grid">
       ${tableSection('⭐ Partidos más acertados','#86EFAC',topMatches,['Partido','Fecha','Aciertos','%'])}
       ${tableSection('😱 Partidos menos acertados (sorpresas)','#FCA5A5',hardMatches,['Partido','Fecha','Aciertos','%'])}
@@ -2201,7 +2254,7 @@ function initChat(){
   import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js').then(({query,orderBy,limit,onSnapshot:onSnap})=>{
     const q=query(chatRef(),orderBy('ts','desc'),limit(80));
     _chatUnsub=onSnap(q,snap=>{
-      const msgs=snap.docs.map(d=>d.data()).reverse();
+      const msgs=snap.docs.map(d=>({...d.data(),_id:d.id})).reverse();
       renderChatMessages(msgs);
       // Count unread
       if(!_chatOpen){
@@ -2247,21 +2300,31 @@ function renderChatMessages(msgs){
   el.innerHTML=msgs.map(m=>{
     const isMe=m.user===currentUser?.name;
     const isAdminMsg=m.user==='Admin';
+    const canDelete=isAdmin||isMe;
     const time=m.ts?new Date(m.ts).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kuwait'}):'';
     const isReaction=m.type==='reaction';
+    const delBtn=canDelete&&m._id?`<span onclick="deleteChatMessage('${m._id}')" style="cursor:pointer;color:var(--muted);font-size:11px;margin-left:6px;" title="Borrar">🗑</span>`:'';
     if(isReaction){
-      return`<div style="text-align:center;font-size:20px;padding:2px 0" title="${m.user}">${m.text} <span style="font-size:10px;color:var(--muted)">${m.user}</span></div>`;
+      return`<div style="text-align:center;font-size:20px;padding:2px 0" title="${m.user}">${m.text} <span style="font-size:10px;color:var(--muted)">${m.user}</span>${delBtn}</div>`;
     }
     return`<div class="chat-msg${isMe?' me':''}${isAdminMsg?' admin-msg':''}">
       <div class="chat-bubble">${escHtml(m.text)}</div>
       <div class="chat-meta">
         ${!isMe?`<span class="chat-name">${m.user}${isAdminMsg?' 👑':''}</span>·`:''}
-        <span>${time} KWT</span>
+        <span>${time} KWT</span>${delBtn}
       </div>
     </div>`;
   }).join('');
   if(wasAtBottom) scrollChatBottom();
 }
+
+async function deleteChatMessage(msgId){
+  if(!confirm('¿Borrar este mensaje?')) return;
+  const {deleteDoc:delDoc,doc:docFn}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  await delDoc(docFn(db,'chat',msgId));
+  toast('Mensaje borrado 🗑','ok');
+}
+window.deleteChatMessage=deleteChatMessage;
 
 async function sendMessage(){
   const inp=document.getElementById('chat-input');
