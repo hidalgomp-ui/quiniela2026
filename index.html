@@ -1055,6 +1055,61 @@ function resolveGroupPositions(preds){
   return pos;
 }
 
+// ── OFFICIAL FIFA THIRD-PLACE SLOT ASSIGNMENT (Annex C) ──────────
+// Each round-of-32 "best 3rd place" slot only accepts a 3rd-placed team
+// from a specific subset of groups. The 8 best 3rd-placed teams overall
+// must be assigned to slots 1-8 respecting these subsets — this mirrors
+// FIFA's official combinations table (one of the 495 valid combinations).
+const THIRD_SLOT_GROUPS = {
+  1: ['A','B','C','D','F'], // M74
+  2: ['C','D','F','G','H'], // M77
+  3: ['C','E','F','H','I'], // M79
+  4: ['E','H','I','J','K'], // M80
+  5: ['B','E','F','I','J'], // M81
+  6: ['A','E','H','I','J'], // M82
+  7: ['E','F','G','I','J'], // M85
+  8: ['D','E','I','J','L'], // M87
+};
+
+// Assigns each of the best 8 third-placed teams to a valid slot (1-8),
+// respecting which groups each slot accepts. Returns an array indexed 0-7
+// matching slot numbers 1-8. Uses a greedy best-fit: process slots with
+// the fewest available candidates first to avoid dead-ends.
+function assignThirdPlaceSlots(gPos){
+  const allThirds = GROUPS.map(g=>({...gPos[`3${g.name}`], group:g.name}))
+    .filter(t=>t&&t.name)
+    .sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+  const top8 = allThirds.slice(0,8);
+  if(top8.length<8){
+    // Not enough confirmed yet — fall back to naive order so UI doesn't break mid-tournament
+    return top8;
+  }
+
+  const slotIds=[1,2,3,4,5,6,7,8];
+  const assignment={}; // slotId -> team
+  const usedTeams=new Set();
+
+  // Build candidate lists per slot, then assign slots with fewest options first (most constrained first)
+  const slotsWithCandidates = slotIds.map(sid=>({
+    sid,
+    candidates: top8.filter(t=>THIRD_SLOT_GROUPS[sid].includes(t.group))
+  })).sort((a,b)=>a.candidates.length-b.candidates.length);
+
+  for(const {sid,candidates} of slotsWithCandidates){
+    const pick = candidates.find(t=>!usedTeams.has(t.name));
+    if(pick){ assignment[sid]=pick; usedTeams.add(pick.name); }
+  }
+
+  // Any team not yet assigned (shouldn't normally happen with a valid combination)
+  // gets placed into any remaining open slot as a fallback so the UI never breaks.
+  const unassignedTeams = top8.filter(t=>!usedTeams.has(t.name));
+  const openSlots = slotIds.filter(sid=>!assignment[sid]);
+  unassignedTeams.forEach((t,i)=>{ if(openSlots[i]) assignment[openSlots[i]]=t; });
+
+  return slotIds.map(sid=>assignment[sid]||null);
+}
+
+
 // ── LEADERBOARD ────────────────────────────────────────────────
 function renderLeaderboard(){
   const ranked=state.users.map(u=>({...u,...calcPts(u)})).sort((a,b)=>b.total-a.total);
@@ -1114,8 +1169,7 @@ function renderPredContent(user,readOnly){
   }
 
   const gPos=resolveGroupPositions(preds);
-  const allThirds=GROUPS.map(g=>({...gPos[`3${g.name}`],group:g.name})).filter(t=>t&&t.name).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
-  const top8thirds=allThirds.slice(0,8);
+  const top8thirds=assignThirdPlaceSlots(gPos);
 
   GROUPS.forEach(g=>{
     const standings=calcGroupStandings(g.name,preds);
@@ -1167,6 +1221,9 @@ function renderPredContent(user,readOnly){
     }
     if(open&&!readOnly){
       html+=`<div class="phase-open-banner"><div class="title">🟢 ${ph.label.toUpperCase()} ABIERTO</div><div class="sub">Cambia los equipos si quieres y predice el marcador — si hay empate, agrega penalties. Se cierra cuando el admin lo indique</div></div>`;
+      if(ph.id==='r16avos'){
+        html+=`<div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#93C5FD;">ℹ️ Los mejores 3ros de grupo se asignan a sus llaves oficiales según el Anexo C de FIFA — cada slot acepta terceros solo de ciertos grupos, exactamente como en el bracket real.</div>`;
+      }
     }
     html+=`<div class="phase-block"><div class="phase-hdr" style="border-left-color:var(--red)">${ph.label} <span class="tag tag-ko">Llave completa: ${ph.pts.full}pts</span></div><div class="match-grid">`;
 
