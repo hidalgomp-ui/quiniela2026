@@ -1098,6 +1098,26 @@ function calcGroupStandings(groupName,preds){
   });
   return sorted;
 }
+
+// ── CRITICAL: merge real admin-loaded results with user predictions ──────
+// Once the admin loads a real result for a match, the KO bracket (who plays who)
+// MUST be calculated from that real result — never from a user's own prediction.
+// User predictions only fill in matches that haven't been played yet, so the
+// bracket preview makes sense before results exist. This prevents each player
+// from seeing a different (wrong) bracket based on their own guessed scores.
+function effectiveGroupScores(preds){
+  const merged={};
+  ALL_MATCHES_GROUP.forEach(m=>{
+    const real=state.results[m.id];
+    if(real && real.s1!==undefined && real.s1!==null){
+      merged[m.id]={s1:real.s1,s2:real.s2};
+    } else if(preds[m.id]){
+      merged[m.id]=preds[m.id];
+    }
+  });
+  return merged;
+}
+
 function resolveGroupPositions(preds){
   const pos={};
   GROUPS.forEach(g=>{const st=calcGroupStandings(g.name,preds);st.forEach((t,i)=>{pos[`${i+1}${g.name}`]=t;});});
@@ -1217,11 +1237,18 @@ function renderPredContent(user,readOnly){
     html+=`<div class="phase-locked-banner"><div class="icon">🔒</div><div class="title">GRUPOS CERRADOS</div><div class="sub">Las predicciones de grupos están bloqueadas</div></div>`;
   }
 
-  const gPos=resolveGroupPositions(preds);
+  // CRITICAL: the KO bracket (who plays who) is always calculated from real
+  // admin-loaded results when they exist — never from the user's own guesses.
+  // This keeps the bracket identical and correct for every player.
+  const gPos=resolveGroupPositions(effectiveGroupScores(preds));
   const top8thirds=assignThirdPlaceSlots(gPos);
 
   GROUPS.forEach(g=>{
-    const standings=calcGroupStandings(g.name,preds);
+    // The mini standings table the user sees while editing still reflects THEIR
+    // own predictions (so they can see "if my guesses are right, this is the table"),
+    // but only for matches without a real result yet — already-played matches always
+    // show the real score so there's no confusion between guess and fact.
+    const standings=calcGroupStandings(g.name,effectiveGroupScores(preds));
     const posColors=['var(--green)','#60A5FA','var(--orange)','var(--muted)'];
     const posLabels=['1°','2°','3°','4°'];
     const smRows=standings.length?`<div class="standings-mini" id="standings-mini-${g.name}"></div>`:'';
@@ -1447,10 +1474,11 @@ async function savePredictions(){
 // This avoids wiping values the user is currently typing
 function refreshStandingsMini(){
   const preds=currentUser.predictions||{};
+  const effective=effectiveGroupScores(preds);
   GROUPS.forEach(g=>{
     const el=document.getElementById(`standings-mini-${g.name}`);
     if(!el)return;
-    const standings=calcGroupStandings(g.name,preds);
+    const standings=calcGroupStandings(g.name,effective);
     const posColors=['var(--green)','#60A5FA','var(--orange)','var(--muted)'];
     const posLabels=['1°','2°','3°','4°'];
     el.innerHTML=`<div class="sm-hdr" style="display:grid;grid-template-columns:18px 20px 1fr 22px 22px 22px 28px;gap:3px;padding:0 0 4px 0">
