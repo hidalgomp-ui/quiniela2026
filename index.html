@@ -1038,16 +1038,65 @@ function calcPts(user){
 function calcGroupStandings(groupName,preds){
   const g=GROUPS.find(x=>x.name===groupName);if(!g)return[];
   const s={};
+  // h2h[teamA][teamB] = {pts, gf, ga} — head-to-head record between every pair
+  const h2h={};
   g.matches.forEach(m=>{
     if(!s[m.n1])s[m.n1]={name:m.n1,flag:m.t1,pts:0,gf:0,ga:0,gd:0,played:0};
     if(!s[m.n2])s[m.n2]={name:m.n2,flag:m.t2,pts:0,gf:0,ga:0,gd:0,played:0};
+    if(!h2h[m.n1])h2h[m.n1]={};
+    if(!h2h[m.n2])h2h[m.n2]={};
     const p=preds[m.id];if(!p||p.s1===''||p.s1===undefined)return;
     const a=parseInt(p.s1),b=parseInt(p.s2);if(isNaN(a)||isNaN(b))return;
     s[m.n1].gf+=a;s[m.n1].ga+=b;s[m.n1].gd+=a-b;s[m.n1].played++;
     s[m.n2].gf+=b;s[m.n2].ga+=a;s[m.n2].gd+=b-a;s[m.n2].played++;
-    if(a>b)s[m.n1].pts+=3;else if(a===b){s[m.n1].pts+=1;s[m.n2].pts+=1;}else s[m.n2].pts+=3;
+    let pts1=0,pts2=0;
+    if(a>b){s[m.n1].pts+=3;pts1=3;}
+    else if(a===b){s[m.n1].pts+=1;s[m.n2].pts+=1;pts1=1;pts2=1;}
+    else{s[m.n2].pts+=3;pts2=3;}
+    h2h[m.n1][m.n2]={pts:pts1,gf:a,ga:b};
+    h2h[m.n2][m.n1]={pts:pts2,gf:b,ga:a};
   });
-  return Object.values(s).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf||a.name.localeCompare(b.name));
+
+  const teams=Object.values(s);
+
+  // FIFA 2026 official tiebreaker order (Article 13):
+  // 1. Points  2. H2H points (among tied)  3. H2H goal diff (among tied)
+  // 4. H2H goals for (among tied)  5. Overall goal diff  6. Overall goals for
+  // 7. Team conduct (not tracked — predictions can't know cards)  8. FIFA ranking (not tracked)
+  function compareTeams(a,b,tiedGroup){
+    if(b.pts!==a.pts) return b.pts-a.pts;
+    // Head-to-head only makes sense when tiedGroup has the relevant matches recorded
+    if(tiedGroup && tiedGroup.length>=2){
+      const aH2H={pts:0,gd:0,gf:0}, bH2H={pts:0,gd:0,gf:0};
+      tiedGroup.forEach(opp=>{
+        if(opp===a.name)return;
+        const rec=h2h[a.name]&&h2h[a.name][opp];
+        if(rec){aH2H.pts+=rec.pts;aH2H.gd+=(rec.gf-rec.ga);aH2H.gf+=rec.gf;}
+      });
+      tiedGroup.forEach(opp=>{
+        if(opp===b.name)return;
+        const rec=h2h[b.name]&&h2h[b.name][opp];
+        if(rec){bH2H.pts+=rec.pts;bH2H.gd+=(rec.gf-rec.ga);bH2H.gf+=rec.gf;}
+      });
+      if(bH2H.pts!==aH2H.pts) return bH2H.pts-aH2H.pts;
+      if(bH2H.gd!==aH2H.gd) return bH2H.gd-aH2H.gd;
+      if(bH2H.gf!==aH2H.gf) return bH2H.gf-aH2H.gf;
+    }
+    if(b.gd!==a.gd) return b.gd-a.gd;
+    if(b.gf!==a.gf) return b.gf-a.gf;
+    return a.name.localeCompare(b.name); // final fallback (would be FIFA ranking in reality)
+  }
+
+  // Group teams by points to identify ties, then resolve each tie cluster with head-to-head
+  const byPts={};
+  teams.forEach(t=>{ (byPts[t.pts]=byPts[t.pts]||[]).push(t); });
+  const sorted=[];
+  Object.keys(byPts).map(Number).sort((a,b)=>b-a).forEach(pts=>{
+    const tiedNames=byPts[pts].map(t=>t.name);
+    const cluster=[...byPts[pts]].sort((a,b)=>compareTeams(a,b,tiedNames));
+    sorted.push(...cluster);
+  });
+  return sorted;
 }
 function resolveGroupPositions(preds){
   const pos={};
@@ -1416,7 +1465,7 @@ function refreshStandingsMini(){
       <span style="font-size:11px;text-align:center;color:var(--muted2)">${t.gf||0}</span>
       <span style="font-size:13px;font-weight:700;text-align:center;color:${posColors[i]};font-family:'Bebas Neue',sans-serif">${t.pts}</span>
     </div>`).join('')}
-    <div style="font-size:9px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--border)">🟢 Top 2 clasifican · Desempate: PTS → DG → GF</div>`;
+    <div style="font-size:9px;color:var(--muted);margin-top:6px;padding-top:4px;border-top:1px solid var(--border)">🟢 Top 2 clasifican · Desempate 2026: Enfrentamiento directo → DG general → GF general</div>`;
   });
 }
 
