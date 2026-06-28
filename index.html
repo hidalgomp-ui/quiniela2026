@@ -1351,7 +1351,22 @@ function renderPredContent(user,readOnly){
       const dispN2=t2?.name||m.s2||'Por definir';
       const dispF2=t2?.flag||'❓';
 
-      // Auto-fill n1/n2 from resolved slots if not overridden
+      // Auto-fill n1/n2 from resolved slots if not overridden by the user.
+      // IMPORTANT: also persist this auto-fill into the in-memory prediction object
+      // (not just for display) so that when the user saves, the suggested teams are
+      // actually stored — not lost because they never touched the dropdown manually.
+      if(!readOnly && !locked && !pred.n1 && dispN1 && dispN1!=='Por definir'){
+        if(!currentUser.koPreds) currentUser.koPreds={};
+        if(!currentUser.koPreds[m.id]) currentUser.koPreds[m.id]={};
+        currentUser.koPreds[m.id].n1 = dispN1;
+        pred.n1 = dispN1;
+      }
+      if(!readOnly && !locked && !pred.n2 && dispN2 && dispN2!=='Por definir'){
+        if(!currentUser.koPreds) currentUser.koPreds={};
+        if(!currentUser.koPreds[m.id]) currentUser.koPreds[m.id]={};
+        currentUser.koPreds[m.id].n2 = dispN2;
+        pred.n2 = dispN2;
+      }
       const predN1=pred.n1||dispN1;
       const predN2=pred.n2||dispN2;
 
@@ -1608,12 +1623,23 @@ function renderSummaryContent(){
     html+=`<tr><td class="match-info"><div style="font-size:11px;font-weight:600">${m.s1} vs ${m.s2}</div><div style="font-size:10px;color:var(--muted)">${m.date}</div></td>`;
     users.forEach(u=>{
       const pred=(u.koPreds||{})[m.id];
-      if(!pred||!pred.n1){html+=`<td><span class="sum-score empty">—</span></td>`;return;}
+      const hasTeams = pred && pred.n1 && pred.n2;
+      const hasScore = hasTeams && pred.s1!==undefined && pred.s1!=='' && pred.s2!==undefined && pred.s2!=='';
+      if(!hasScore){html+=`<td><span class="sum-score empty">—</span></td>`;return;}
       const sc=res?scoreKO(pred,res,ph.pts):null;
       const cls=sc===null?'pending':sc>0?'correct':'wrong';
-      html+=`<td><span class="sum-score ${cls}" title="${pred.n1} vs ${pred.n2}">${ALL_TEAMS_FLAGS[pred.n1]||'?'} ${pred.n1}</span></td>`;
+      const isDraw = parseInt(pred.s1)===parseInt(pred.s2);
+      // Build full readable prediction: teams + score, and penalty winner if it was a draw
+      let predText = `${ALL_TEAMS_FLAGS[pred.n1]||'?'}${pred.n1} ${pred.s1}-${pred.s2} ${pred.n2}${ALL_TEAMS_FLAGS[pred.n2]||'?'}`;
+      let penText = '';
+      if(isDraw){
+        penText = pred.penPick
+          ? `<br><span style="font-size:9px;color:var(--orange)">🥅 ${ALL_TEAMS_FLAGS[pred.penPick]||''}${pred.penPick}${pred.penS1!==undefined&&pred.penS1!==''?` (${pred.penS1}-${pred.penS2})`:''}</span>`
+          : `<br><span style="font-size:9px;color:#FCA5A5">⚠ sin penalties</span>`;
+      }
+      html+=`<td><span class="sum-score ${cls}" style="font-size:10px;white-space:normal;display:inline-block;line-height:1.3" title="${pred.n1} ${pred.s1}-${pred.s2} ${pred.n2}">${predText}${penText}</span></td>`;
     });
-    html+=`<td>${res?`<span class="sum-result">${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1}${res.penWinner?' (pen.)':''}</span>`:'<span style="color:var(--muted);font-size:11px">Pend.</span>'}</td></tr>`;
+    html+=`<td>${res?`<span class="sum-result">${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1} ${res.s1!==undefined?`${res.s1}-${res.s2}`:''}${res.penWinner?` (pen. ${res.penWinner})`:''}</span>`:'<span style="color:var(--muted);font-size:11px">Pend.</span>'}</td></tr>`;
   });
   html+=`</tbody></table></div>`;el.innerHTML=html;
 }
