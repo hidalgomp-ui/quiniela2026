@@ -1350,7 +1350,7 @@ function renderPredContent(user,readOnly){
         <div class="ko-row">
           <div class="ko-team">
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${m.s1||''}${n1Crown}</div>
-            <select class="ko-select" ${dis} style="${n1WinnerStyle}" onchange="setKOPred('${m.id}','n1',this.value)">
+            <select class="ko-select" ${dis} style="${n1WinnerStyle}" onchange="setKOPredAndRefreshNow('${m.id}','n1',this.value)">
               <option value="">— Equipo —</option>${teamOpts}
             </select>
           </div>
@@ -1369,7 +1369,7 @@ function renderPredContent(user,readOnly){
           </div>
           <div class="ko-team r">
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;text-align:right">${n2Crown}${m.s2||''}</div>
-            <select class="ko-select" ${dis} style="${n2WinnerStyle}" onchange="setKOPred('${m.id}','n2',this.value)">
+            <select class="ko-select" ${dis} style="${n2WinnerStyle}" onchange="setKOPredAndRefreshNow('${m.id}','n2',this.value)">
               <option value="">— Equipo —</option>${teamOpts2}
             </select>
           </div>
@@ -1456,7 +1456,15 @@ function setPredAndRefresh(id,field,val){
 function setKOPred(id,field,val){
   if(!currentUser.koPreds)currentUser.koPreds={};
   if(!currentUser.koPreds[id])currentUser.koPreds[id]={};
-  currentUser.koPreds[id][field]=val;
+  const entry=currentUser.koPreds[id];
+  // If the user changes which team occupies n1 or n2, any previously chosen
+  // penalty winner may no longer be one of the two teams in this match —
+  // clear it so the dropdown never shows a stale/wrong selection.
+  if((field==='n1'||field==='n2') && entry.penPick && entry.penPick!==val){
+    const otherTeam = field==='n1' ? entry.n2 : entry.n1;
+    if(entry.penPick!==otherTeam) entry.penPick='';
+  }
+  entry[field]=val;
   _hasPendingChanges=true;
   document.getElementById('pred-save-info').textContent='● Sin guardar';
 }
@@ -1471,6 +1479,17 @@ function setKOPredAndRefresh(id,field,val){
     renderPredContent(currentUser,false);
     window.scrollTo(0,sy);
   },650);
+}
+// Used for team <select> changes — these are discrete events (not continuous typing
+// like score inputs), so we refresh immediately rather than debouncing. This ensures
+// the penalty-winner dropdown always reflects whichever teams the user just picked,
+// instead of showing stale options from before the team override.
+function setKOPredAndRefreshNow(id,field,val){
+  setKOPred(id,field,val);
+  clearTimeout(_koRefreshTimer);
+  const sy=window.scrollY;
+  renderPredContent(currentUser,false);
+  window.scrollTo(0,sy);
 }
 async function savePredictions(){
   const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
@@ -2340,7 +2359,7 @@ window.showAdminLogin=showAdminLogin; window.showUserLogin=showUserLogin;
 window.checkUserExists=checkUserExists; window.showPage=showPage;
 window.savePredictions=savePredictions; window.saveChampion=saveChampion;
 window.pickChampion=pickChampion; window.setPred=setPred;
-window.setPredAndRefresh=setPredAndRefresh; window.setKOPred=setKOPred; window.setKOPredAndRefresh=setKOPredAndRefresh;
+window.setPredAndRefresh=setPredAndRefresh; window.setKOPred=setKOPred; window.setKOPredAndRefresh=setKOPredAndRefresh; window.setKOPredAndRefreshNow=setKOPredAndRefreshNow;
 window.adminViewPreds=adminViewPreds; window.setSumPhase=setSumPhase;
 window.setSumGrp=setSumGrp; window.setAdminPhase=setAdminPhase;
 window.downloadMyQuiniela=downloadMyQuiniela;
