@@ -434,7 +434,15 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div><div class="sec-title bb">📊 ESTADÍSTICAS</div><div class="sec-sub">Se actualiza en tiempo real con cada resultado</div></div>
       <button onclick="downloadReport()" style="padding:8px 16px;background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:var(--gold);font-size:12px;font-weight:700;cursor:pointer;">📄 Descargar reporte</button>
     </div>
-    <div id="public-stats"></div>
+    <div class="grp-tabs" id="stats-view-tabs">
+      <button class="grp-tab active" onclick="setStatsView('global',this)">🌍 Global</button>
+      <button class="grp-tab" onclick="setStatsView('byphase',this)">🏆 Por Fase</button>
+    </div>
+    <div id="stats-global-view"><div id="public-stats"></div></div>
+    <div id="stats-byphase-view" style="display:none">
+      <div class="grp-tabs" id="phase-stats-tabs"></div>
+      <div id="phase-stats-content"></div>
+    </div>
   </div>
 
   <!-- SUMMARY -->
@@ -684,23 +692,26 @@ const GROUPS = [
 ];
 
 // Official FIFA 2026 R32 bracket (verified)
+// 16avos de Final — bracket OFICIAL FINAL confirmado por FIFA (grupos ya cerrados,
+// terceros lugares ya resueltos). Usamos los equipos reales directamente en vez de
+// fórmulas dinámicas de posición porque la fase de grupos ya terminó.
 const R16AVOs = [
-  {id:'M73',date:'Jun 28',venue:'SoFi, LA',       s1:'2A',     s2:'2B'},
-  {id:'M74',date:'Jun 29',venue:'Boston',          s1:'1E',     s2:'3rd_1'},
-  {id:'M75',date:'Jun 29',venue:'Monterrey',       s1:'1F',     s2:'2C'},
-  {id:'M76',date:'Jun 29',venue:'Houston',         s1:'1C',     s2:'2F'},
-  {id:'M77',date:'Jun 30',venue:'MetLife, NJ',     s1:'1I',     s2:'3rd_2'},
-  {id:'M78',date:'Jun 30',venue:'Dallas',          s1:'2E',     s2:'2I'},
-  {id:'M79',date:'Jun 30',venue:'Azteca, CDMX',    s1:'1A',     s2:'3rd_3'},
-  {id:'M80',date:'Jul 1', venue:'Atlanta',         s1:'1L',     s2:'3rd_4'},
-  {id:'M81',date:'Jul 1', venue:'SF Bay Area',     s1:'1D',     s2:'3rd_5'},
-  {id:'M82',date:'Jul 1', venue:'Seattle',         s1:'1G',     s2:'3rd_6'},
-  {id:'M83',date:'Jul 2', venue:'Toronto',         s1:'2K',     s2:'2L'},
-  {id:'M84',date:'Jul 2', venue:'SoFi, LA',        s1:'1H',     s2:'2J'},
-  {id:'M85',date:'Jul 2', venue:'Vancouver',       s1:'1B',     s2:'3rd_7'},
-  {id:'M86',date:'Jul 3', venue:'Miami',           s1:'1J',     s2:'2H'},
-  {id:'M87',date:'Jul 3', venue:'Kansas City',     s1:'1K',     s2:'3rd_8'},
-  {id:'M88',date:'Jul 3', venue:'Dallas',          s1:'2D',     s2:'2G'},
+  {id:'M73',date:'Jun 28',venue:'SoFi, LA',       s1:'Sudáfrica',  s2:'Canadá'},
+  {id:'M74',date:'Jun 29',venue:'Boston',          s1:'Alemania',   s2:'Paraguay'},
+  {id:'M75',date:'Jun 29',venue:'Monterrey',       s1:'Países Bajos', s2:'Marruecos'},
+  {id:'M76',date:'Jun 29',venue:'Houston',         s1:'Brasil',     s2:'Japón'},
+  {id:'M77',date:'Jun 30',venue:'MetLife, NJ',     s1:'Francia',    s2:'Suecia'},
+  {id:'M78',date:'Jun 30',venue:'Dallas',          s1:'Costa de Marfil', s2:'Noruega'},
+  {id:'M79',date:'Jun 30',venue:'Azteca, CDMX',    s1:'México',     s2:'Ecuador'},
+  {id:'M80',date:'Jul 1', venue:'Atlanta',         s1:'Inglaterra', s2:'Congo DR'},
+  {id:'M81',date:'Jul 1', venue:'SF Bay Area',     s1:'EE.UU.',     s2:'Bosnia'},
+  {id:'M82',date:'Jul 1', venue:'Seattle',         s1:'Bélgica',    s2:'Senegal'},
+  {id:'M83',date:'Jul 2', venue:'Toronto',         s1:'Portugal',   s2:'Croacia'},
+  {id:'M84',date:'Jul 2', venue:'SoFi, LA',        s1:'España',     s2:'Austria'},
+  {id:'M85',date:'Jul 2', venue:'Vancouver',       s1:'Suiza',      s2:'Argelia'},
+  {id:'M86',date:'Jul 3', venue:'Miami',           s1:'Argentina',  s2:'Cabo Verde'},
+  {id:'M87',date:'Jul 3', venue:'Kansas City',     s1:'Colombia',   s2:'Ghana'},
+  {id:'M88',date:'Jul 3', venue:'Dallas',          s1:'Australia',  s2:'Egipto'},
 ];
 
 // R16 path (verified from Sky Sports official bracket — Jul 4-7)
@@ -1032,6 +1043,29 @@ function calcPts(user){
   });
   if(user.champion&&state.results['__champion__']&&user.champion===state.results['__champion__'])champ=10;
   return{grp,ko,pen,champ,total:grp+ko+pen+champ};
+}
+
+// Returns points broken down per individual phase (grupos, r16avos, octavos, cuartos,
+// semis, tercero, final, champion) so each player can see where they did best —
+// not just the grouped grp/ko/champ totals that calcPts gives.
+function calcPtsByPhase(user){
+  const byPhase = {};
+  let grpPts = 0;
+  ALL_MATCHES_GROUP.forEach(m=>{ grpPts += scoreGroup((user.predictions||{})[m.id], state.results[m.id]); });
+  byPhase['grupos'] = grpPts;
+
+  KO_PHASES.forEach(ph=>{
+    let phasePts = 0;
+    ph.matches.forEach(m=>{
+      phasePts += scoreKO((user.koPreds||{})[m.id], state.results[m.id], ph.pts);
+    });
+    byPhase[ph.id] = phasePts;
+  });
+
+  byPhase['champion'] = (user.champion && state.results['__champion__'] && user.champion===state.results['__champion__']) ? 10 : 0;
+
+  const total = Object.values(byPhase).reduce((a,b)=>a+b,0);
+  return { byPhase, total };
 }
 
 // ── GROUP STANDINGS ENGINE ─────────────────────────────────────
@@ -1434,6 +1468,8 @@ function resolveKOSlot(slot,results,gPos,top8thirds){
     if(l) return{name:l,flag:ALL_TEAMS_FLAGS[l]||'❓'};
     return{name:slot,flag:'❓'};
   }
+  // Direct team name (used now that group stage is complete and R32 teams are hardcoded)
+  if(ALL_TEAMS_FLAGS[slot]) return{name:slot,flag:ALL_TEAMS_FLAGS[slot]};
   return{name:slot,flag:'❓'};
 }
 
@@ -1664,10 +1700,11 @@ function renderAdmin(){
     {id:'final',    label:'🏆 Final',             auto:false},
   ];
 
-  let html='<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">'
+  let html='<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border)">'
     +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Fase</div>'
     +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;text-align:center">Predicciones</div>'
     +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;text-align:center">Resumen público</div>'
+    +'<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;text-align:center">¿Quién falta?</div>'
     +'</div>';
 
   phases.forEach(ph=>{
@@ -1705,13 +1742,20 @@ function renderAdmin(){
         : `<button class="btn-open" style="background:rgba(212,175,55,0.1);border-color:rgba(212,175,55,0.3);color:var(--gold)" onclick="revealPhase('${ph.id}')">👁 Revelar</button>`;
     }
 
-    html+=`<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+    // Who's missing predictions for this phase
+    const pendingForPhase = getPendingUsersForPhase(ph.id);
+    const pendingBtn = pendingForPhase.length
+      ? `<button onclick="showPendingForPhase('${ph.id}')" style="padding:6px 14px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#FCA5A5;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">⚠ ${pendingForPhase.length} falta${pendingForPhase.length>1?'n':''}</button>`
+      : `<span style="font-size:11px;color:#86EFAC;font-weight:600">✓ Completo</span>`;
+
+    html+=`<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
       <div>
         <div style="font-weight:600;font-size:14px">${ph.label}</div>
         <div style="font-size:11px;color:${ph.noVisible?'var(--muted)':isVisible?'var(--gold)':'var(--muted)'};margin-top:2px">${ph.noVisible?'Visible en pestaña 👁 Resumen':isVisible?'👁 Resumen visible para todos':'🔒 Resumen oculto'}</div>
       </div>
       <div style="text-align:center">${predBtn}</div>
       <div style="text-align:center">${extraBtn}</div>
+      <div style="text-align:center">${pendingBtn}</div>
     </div>`;
   });
   pc.innerHTML=html;
@@ -1810,6 +1854,43 @@ function showPendingChampions(){
   alert(`Jugadores SIN pick de campeón (${pending.length}):\n\n${names}`);
 }
 window.showPendingChampions = showPendingChampions;
+
+// Returns array of usernames who haven't filled in ALL matches of a given phase yet.
+// "Filled in" means: a score for group matches, or at least both teams picked for KO matches.
+function getPendingUsersForPhase(phaseId){
+  const users = state.users.filter(u=>u.name!=='Admin');
+  if(phaseId==='grupos'){
+    return users.filter(u=>{
+      const preds=u.predictions||{};
+      return ALL_MATCHES_GROUP.some(m=>{
+        const p=preds[m.id];
+        return !p || p.s1===undefined || p.s1==='' || p.s2===undefined || p.s2==='';
+      });
+    }).map(u=>u.name);
+  }
+  const ph = KO_PHASES.find(p=>p.id===phaseId);
+  if(!ph) return [];
+  return users.filter(u=>{
+    const preds=u.koPreds||{};
+    return ph.matches.some(m=>{
+      const p=preds[m.id];
+      if(!p || !p.n1 || !p.n2 || p.s1===undefined || p.s1==='' || p.s2===undefined || p.s2==='') return true;
+      // If their own predicted score is a draw, they must also pick a penalty winner
+      const isDraw = parseInt(p.s1)===parseInt(p.s2);
+      if(isDraw && !p.penPick) return true;
+      return false;
+    });
+  }).map(u=>u.name);
+}
+
+function showPendingForPhase(phaseId){
+  const pending = getPendingUsersForPhase(phaseId);
+  const labels={grupos:'Grupos',r16avos:'16avos de Final',octavos:'Octavos de Final',cuartos:'Cuartos de Final',semis:'Semifinales',tercero:'Tercer Lugar',final:'Final'};
+  if(!pending.length){ toast(`Todos completaron ${labels[phaseId]||phaseId} ✓`,'ok'); return; }
+  alert(`Jugadores que AÚN no completan todas sus predicciones de ${labels[phaseId]||phaseId} (${pending.length}):\n\n${pending.join(', ')}`);
+}
+window.getPendingUsersForPhase = getPendingUsersForPhase;
+window.showPendingForPhase = showPendingForPhase;
 
 async function openPhase(id){
   await savePhasesToCloud({[id+'_open']:true});
@@ -1966,7 +2047,94 @@ function buildStats(){
 function renderAdminStats(){
   renderStatsTo('admin-stats');
   renderStatsTo('public-stats');
+  if(document.getElementById('phase-stats-content')) renderPhaseStats();
 }
+
+// ── PER-PHASE STATS ──────────────────────────────────────────
+let _statsView='global';
+let _phaseStatsActive='grupos';
+
+function setStatsView(view,btn){
+  _statsView=view;
+  document.querySelectorAll('#stats-view-tabs .grp-tab').forEach(t=>t.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  document.getElementById('stats-global-view').style.display = view==='global' ? 'block':'none';
+  document.getElementById('stats-byphase-view').style.display = view==='byphase' ? 'block':'none';
+  if(view==='byphase') renderPhaseStats();
+}
+
+function setPhaseStatsTab(id,btn){
+  _phaseStatsActive=id;
+  document.querySelectorAll('#phase-stats-tabs .grp-tab').forEach(t=>t.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  renderPhaseStatsContent();
+}
+
+function renderPhaseStats(){
+  const tabs=document.getElementById('phase-stats-tabs');
+  const phases=[
+    {id:'grupos',label:'⚽ Grupos'},
+    {id:'r16avos',label:'16avos'},
+    {id:'octavos',label:'Octavos'},
+    {id:'cuartos',label:'Cuartos'},
+    {id:'semis',label:'Semis'},
+    {id:'tercero',label:'3er Lugar'},
+    {id:'final',label:'Final'},
+    {id:'champion',label:'👑 Campeón'},
+  ];
+  tabs.innerHTML=phases.map(p=>`<button class="grp-tab${_phaseStatsActive===p.id?' active':''}" onclick="setPhaseStatsTab('${p.id}',this)">${p.label}</button>`).join('');
+  renderPhaseStatsContent();
+}
+
+function renderPhaseStatsContent(){
+  const el=document.getElementById('phase-stats-content');
+  if(!el) return;
+  const users=state.users.filter(u=>u.name!=='Admin');
+  if(!users.length){ el.innerHTML='<div class="empty">Sin jugadores aún</div>'; return; }
+
+  const colors=['#D4AF37','#94A3B8','#CD7C3E'];
+  const ranked = users.map(u=>{
+    const pp = calcPtsByPhase(u);
+    return { name:u.name, pts: pp.byPhase[_phaseStatsActive]||0, total: pp.total };
+  }).sort((a,b)=>b.pts-a.pts);
+
+  const phaseLabels = {
+    grupos:'Fase de Grupos', r16avos:'16avos de Final', octavos:'Octavos de Final',
+    cuartos:'Cuartos de Final', semis:'Semifinales', tercero:'Tercer Lugar',
+    final:'Final', champion:'Pick de Campeón'
+  };
+
+  // Check if this phase has any results loaded yet, to give context
+  let hasAnyResult = false;
+  if(_phaseStatsActive==='grupos') hasAnyResult = ALL_MATCHES_GROUP.some(m=>state.results[m.id]);
+  else if(_phaseStatsActive==='champion') hasAnyResult = !!state.results['__champion__'];
+  else { const ph=KO_PHASES.find(p=>p.id===_phaseStatsActive); hasAnyResult = ph ? ph.matches.some(m=>state.results[m.id]) : false; }
+
+  let html = `<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">🏆 Ranking — ${phaseLabels[_phaseStatsActive]}</div>`;
+
+  if(!hasAnyResult){
+    html += `<div class="empty">Aún no hay resultados cargados para esta fase</div>`;
+  } else {
+    html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+        <td style="padding:6px 8px">#</td><td style="padding:6px 8px">Jugador</td>
+        <td style="padding:6px 8px;text-align:center">Pts en esta fase</td>
+        <td style="padding:6px 8px;text-align:center">Total general</td>
+      </tr>
+      ${ranked.map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+        <td style="padding:7px 8px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+        <td style="padding:7px 8px;font-weight:600">${u.name}</td>
+        <td style="padding:7px 8px;text-align:center;font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--gold);font-weight:700">${u.pts}</td>
+        <td style="padding:7px 8px;text-align:center;color:var(--muted2)">${u.total}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+  el.innerHTML=html;
+}
+
+window.setStatsView=setStatsView;
+window.setPhaseStatsTab=setPhaseStatsTab;
+
 function renderStatsTo(elId){
   const el=document.getElementById(elId);
   if(!el) return;
