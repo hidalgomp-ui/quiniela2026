@@ -865,6 +865,27 @@ function isPhaseVisible(phaseId){
   return state.phases[phaseId+'_visible']===true;
 }
 
+// ── PER-MATCH LOCK OVERRIDE (KO phases) ────────────────────────
+// Even when a whole KO phase is "open", the admin can lock an individual
+// match (e.g. because its kickoff is near and some players still haven't
+// filled it in) while leaving the rest of the phase's matches editable.
+// Stored as state.phases['match_locked_' + matchId] = true/false.
+function isMatchLockedOverride(matchId){
+  return state.phases['match_locked_'+matchId] === true;
+}
+async function lockMatch(matchId){
+  await savePhasesToCloud({['match_locked_'+matchId]: true});
+  toast(`Partido ${matchId} cerrado 🔒`,'ok');
+  renderAdmin(); if(currentUser) renderPredictions();
+}
+async function unlockMatch(matchId){
+  await savePhasesToCloud({['match_locked_'+matchId]: false});
+  toast(`Partido ${matchId} abierto 🔓`,'ok');
+  renderAdmin(); if(currentUser) renderPredictions();
+}
+window.lockMatch = lockMatch;
+window.unlockMatch = unlockMatch;
+
 // ── AUTH ──────────────────────────────────────────────────────
 function showAdminLogin(){document.getElementById('login-form').style.display='none';document.getElementById('admin-login-form').style.display='block';}
 function showUserLogin(){document.getElementById('login-form').style.display='block';document.getElementById('admin-login-form').style.display='none';}
@@ -1340,7 +1361,7 @@ function renderPredContent(user,readOnly){
     ph.matches.forEach(m=>{
       const pred=koPreds[m.id]||{};
       const res=state.results[m.id];
-      const locked=!open||!!res;
+      const locked=!open||!!res||isMatchLockedOverride(m.id);
       const dis=(locked||readOnly)?'disabled':'';
 
       // Resolve display teams — from real results of previous round if available, else from slots
@@ -1395,7 +1416,13 @@ function renderPredContent(user,readOnly){
       const n1Crown = userPredWinner==='n1' ? ' 👑' : '';
       const n2Crown = userPredWinner==='n2' ? ' 👑' : '';
 
-      html+=`<div class="ko-card ${cls}">
+      const matchLockedOverride = isMatchLockedOverride(m.id);
+      const adminLockBtn = isAdmin
+        ? `<button onclick="${matchLockedOverride?`unlockMatch('${m.id}')`:`lockMatch('${m.id}')`}" style="position:absolute;top:8px;right:10px;font-size:10px;padding:3px 8px;border-radius:6px;cursor:pointer;border:1px solid ${matchLockedOverride?'rgba(239,68,68,0.4)':'rgba(34,197,94,0.4)'};background:${matchLockedOverride?'rgba(239,68,68,0.1)':'rgba(34,197,94,0.08)'};color:${matchLockedOverride?'#FCA5A5':'#86EFAC'};font-weight:700;">${matchLockedOverride?'🔒 Cerrado — abrir':'🔓 Cerrar este'}</button>`
+        : (matchLockedOverride ? `<span style="position:absolute;top:8px;right:10px;font-size:10px;color:var(--orange);font-weight:700;">🔒 Cerrado por admin</span>` : '');
+
+      html+=`<div class="ko-card ${cls}" style="position:relative;">
+        ${adminLockBtn}
         <div class="ko-row">
           <div class="ko-team">
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${m.s1||''}${n1Crown}</div>
@@ -1488,12 +1515,36 @@ function resolveKOSlot(slot,results,gPos,top8thirds){
   return{name:slot,flag:'❓'};
 }
 
+// ── AUTO-GUARDADO ────────────────────────────────────────────
+// Guarda automáticamente unos segundos después de que el usuario deja de
+// escribir/seleccionar, para que nunca pierdan sus predicciones por olvido.
+// El botón "Guardar" sigue funcionando como respaldo inmediato.
+let _autoSaveTimer=null;
+function scheduleAutoSave(){
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer=setTimeout(async()=>{
+    if(!currentUser || isAdmin) return;
+    try{
+      const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
+      u.predictions={...currentUser.predictions};
+      u.koPreds={...currentUser.koPreds};
+      await saveUserToCloud(u);
+      _hasPendingChanges=false;
+      const info=document.getElementById('pred-save-info');
+      if(info) info.textContent='✓ Guardado automáticamente';
+    }catch(e){
+      console.error('Auto-guardado falló:',e);
+    }
+  },2500);
+}
+
 function setPred(id,field,val){
   if(!currentUser.predictions)currentUser.predictions={};
   if(!currentUser.predictions[id])currentUser.predictions[id]={};
   currentUser.predictions[id][field]=val;
   _hasPendingChanges=true;
-  document.getElementById('pred-save-info').textContent='● Sin guardar';
+  document.getElementById('pred-save-info').textContent='● Guardando...';
+  scheduleAutoSave();
 }
 function setPredAndRefresh(id,field,val){
   setPred(id,field,val);
@@ -1517,7 +1568,8 @@ function setKOPred(id,field,val){
   }
   entry[field]=val;
   _hasPendingChanges=true;
-  document.getElementById('pred-save-info').textContent='● Sin guardar';
+  document.getElementById('pred-save-info').textContent='● Guardando...';
+  scheduleAutoSave();
 }
 let _koRefreshTimer=null;
 function setKOPredAndRefresh(id,field,val){
@@ -1543,6 +1595,7 @@ function setKOPredAndRefreshNow(id,field,val){
   window.scrollTo(0,sy);
 }
 async function savePredictions(){
+  clearTimeout(_autoSaveTimer);
   const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
   u.predictions={...currentUser.predictions};u.koPreds={...currentUser.koPreds};
   await saveUserToCloud(u);
@@ -1838,8 +1891,12 @@ function renderAdminResults(){
     const mkOpts=(sel)=>Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>`<option value="${n}" ${sel===n?'selected':''}>${f} ${n}</option>`).join('');
     el.innerHTML=ph.matches.map(m=>{
       const res=state.results[m.id]||{};const saved=!!res.n1;
+      const matchLocked = isMatchLockedOverride(m.id);
       return`<div class="ko-res-card">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${m.id} · ${m.date} · ${m.venue}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-size:11px;color:var(--muted)">${m.id} · ${m.date} · ${m.venue}</div>
+          <button onclick="${matchLocked?`unlockMatch('${m.id}')`:`lockMatch('${m.id}')`}" style="font-size:10px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid ${matchLocked?'rgba(239,68,68,0.4)':'rgba(34,197,94,0.4)'};background:${matchLocked?'rgba(239,68,68,0.1)':'rgba(34,197,94,0.08)'};color:${matchLocked?'#FCA5A5':'#86EFAC'};font-weight:700;">${matchLocked?'🔒 Cerrado — click para abrir':'🔓 Abierto — click para cerrar'}</button>
+        </div>
         <div style="display:grid;grid-template-columns:1fr auto auto auto 1fr;gap:8px;align-items:center;margin-bottom:8px">
           <select class="ko-select" id="ko-${m.id}-n1"><option value="">— Equipo 1 —</option>${mkOpts(res.n1)}</select>
           <input class="ri" style="width:40px;height:36px" type="number" min="0" max="20" id="ko-${m.id}-s1" value="${res.s1??''}" placeholder="-"/>
