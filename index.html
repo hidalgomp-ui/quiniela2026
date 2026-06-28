@@ -1296,7 +1296,7 @@ function renderPredContent(user,readOnly){
       return;
     }
     if(open&&!readOnly){
-      html+=`<div class="phase-open-banner"><div class="title">🟢 ${ph.label.toUpperCase()} ABIERTO</div><div class="sub">Cambia los equipos si quieres y predice el marcador — si hay empate, agrega penalties. Se cierra cuando el admin lo indique</div></div>`;
+      html+=`<div class="phase-open-banner"><div class="title">🟢 ${ph.label.toUpperCase()} ABIERTO</div><div class="sub">Elige equipos y pon el marcador que crees que pasará — el ganador 👑 se calcula solo. Si predices empate, define quién gana por penalties</div></div>`;
       if(ph.id==='r16avos'){
         html+=`<div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#93C5FD;">ℹ️ Los mejores 3ros de grupo se asignan a sus llaves oficiales según el Anexo C de FIFA — cada slot acepta terceros solo de ciertos grupos, exactamente como en el bracket real.</div>`;
       }
@@ -1337,11 +1337,20 @@ function renderPredContent(user,readOnly){
       const showPenField = predIsDraw && !locked;
       const penOpts=[predN1,predN2].map(n=>`<option value="${n}" ${pred.penPick===n?'selected':''}>${ALL_TEAMS_FLAGS[n]||''} ${n}</option>`).join('');
 
+      // Visual feedback: highlight which team the user's own score predicts as winner
+      const userPredWinner = (pred.s1!==undefined && pred.s1!=='' && pred.s2!==undefined && pred.s2!=='')
+        ? (parseInt(pred.s1)>parseInt(pred.s2) ? 'n1' : parseInt(pred.s2)>parseInt(pred.s1) ? 'n2' : 'draw')
+        : null;
+      const n1WinnerStyle = userPredWinner==='n1' ? 'border-color:rgba(34,197,94,0.5);background:rgba(34,197,94,0.06);' : '';
+      const n2WinnerStyle = userPredWinner==='n2' ? 'border-color:rgba(34,197,94,0.5);background:rgba(34,197,94,0.06);' : '';
+      const n1Crown = userPredWinner==='n1' ? ' 👑' : '';
+      const n2Crown = userPredWinner==='n2' ? ' 👑' : '';
+
       html+=`<div class="ko-card ${cls}">
         <div class="ko-row">
           <div class="ko-team">
-            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${m.s1||''}</div>
-            <select class="ko-select" ${dis} onchange="setKOPred('${m.id}','n1',this.value)">
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${m.s1||''}${n1Crown}</div>
+            <select class="ko-select" ${dis} style="${n1WinnerStyle}" onchange="setKOPred('${m.id}','n1',this.value)">
               <option value="">— Equipo —</option>${teamOpts}
             </select>
           </div>
@@ -1353,12 +1362,14 @@ function renderPredContent(user,readOnly){
             </div>
             <div class="mi">${m.date}</div>
             <div class="mi">${m.venue}</div>
+            ${userPredWinner && userPredWinner!=='draw' && !locked ? `<div style="font-size:10px;color:#86EFAC;font-weight:600;margin-top:2px">Pasa: ${userPredWinner==='n1'?predN1:predN2}</div>` : ''}
+            ${userPredWinner==='draw' && !locked ? `<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px">Empate — define penalties ⬇</div>` : ''}
             ${res?`<div class="res-result">${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1||''} ${res.s1!==undefined?`${res.s1}-${res.s2}`:''} ${res.penWinner?'(pen.)':''}</div>`:''}
             ${badge}
           </div>
           <div class="ko-team r">
-            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;text-align:right">${m.s2||''}</div>
-            <select class="ko-select" ${dis} onchange="setKOPred('${m.id}','n2',this.value)">
+            <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;text-align:right">${n2Crown}${m.s2||''}</div>
+            <select class="ko-select" ${dis} style="${n2WinnerStyle}" onchange="setKOPred('${m.id}','n2',this.value)">
               <option value="">— Equipo —</option>${teamOpts2}
             </select>
           </div>
