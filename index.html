@@ -772,6 +772,12 @@ const ALL_MATCHES_GROUP = GROUPS.flatMap(g=>g.matches.map(m=>({...m,group:g.name
 // ── STATE ─────────────────────────────────────────────────────
 let state = { accessCode:'MUNDIAL26', adminPw:'admin2026', results:{}, phases:{}, users:[] };
 let currentUser=null, isAdmin=false, adminViewUser=null, activeAdminPhase='A', _refreshTimer=null, _hasPendingChanges=false;
+// Cache of the computed group positions / third-place assignments, refreshed every
+// time a player's predictions render. The admin panel reads from this cache to know
+// which real teams belong to each KO match.id — since the admin has no "predictions"
+// of its own to compute this from directly.
+let lastComputedGPos = {};
+let lastComputedTop8thirds = [];
 
 // ── FIREBASE HELPERS ──────────────────────────────────────────
 async function saveUserToCloud(u){ await setDoc(userRef(u.name),u); }
@@ -1297,6 +1303,10 @@ function renderPredContent(user,readOnly){
   // This keeps the bracket identical and correct for every player.
   const gPos=resolveGroupPositions(effectiveGroupScores(preds));
   const top8thirds=assignThirdPlaceSlots(gPos);
+  // Cache for the admin panel, which doesn't have a "user" with predictions of
+  // its own but still needs to resolve which real teams belong to each match.id
+  lastComputedGPos = gPos;
+  lastComputedTop8thirds = top8thirds;
 
   GROUPS.forEach(g=>{
     // The mini standings table the user sees while editing still reflects THEIR
@@ -1764,6 +1774,13 @@ async function saveChampion(){
 function renderAdmin(){
   document.getElementById('access-code-display').textContent=state.accessCode;
 
+  // Always recompute the bracket cache from REAL results (not any user's guesses)
+  // so the admin panel can correctly show which teams belong to each KO match,
+  // even if no player's prediction screen has rendered yet in this session.
+  const adminGPos = resolveGroupPositions(state.results);
+  lastComputedGPos = adminGPos;
+  lastComputedTop8thirds = assignThirdPlaceSlots(adminGPos);
+
   // Phase controls — one clear row per phase with independent buttons
   const pc=document.getElementById('phase-controls');
   const groupsClosed=isGroupsClosed();
@@ -1892,17 +1909,28 @@ function renderAdminResults(){
     el.innerHTML=ph.matches.map(m=>{
       const res=state.results[m.id]||{};const saved=!!res.n1;
       const matchLocked = isMatchLockedOverride(m.id);
+      // CRITICAL: resolve and display the actual teams for this slot, since match.s1/s2
+      // can be either a literal team name (hardcoded R32) or a dynamic slot/winner
+      // reference (later rounds). Without this, the admin has no way to know which
+      // real teams correspond to this match.id and can save the wrong result.
+      const expT1 = resolveKOSlot(m.s1, state.results, lastComputedGPos, lastComputedTop8thirds);
+      const expT2 = resolveKOSlot(m.s2, state.results, lastComputedGPos, lastComputedTop8thirds);
+      const expN1 = expT1?.name || m.s1 || '?';
+      const expN2 = expT2?.name || m.s2 || '?';
+      const expF1 = expT1?.flag || '';
+      const expF2 = expT2?.flag || '';
       return`<div class="ko-res-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <div style="font-size:11px;color:var(--muted)">${m.id} · ${m.date} · ${m.venue}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <div style="font-size:13px;font-weight:700;color:var(--gold)">${expF1} ${expN1} <span style="color:var(--muted);font-weight:400">vs</span> ${expN2} ${expF2}</div>
           <button onclick="${matchLocked?`unlockMatch('${m.id}')`:`lockMatch('${m.id}')`}" style="font-size:10px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid ${matchLocked?'rgba(239,68,68,0.4)':'rgba(34,197,94,0.4)'};background:${matchLocked?'rgba(239,68,68,0.1)':'rgba(34,197,94,0.08)'};color:${matchLocked?'#FCA5A5':'#86EFAC'};font-weight:700;">${matchLocked?'🔒 Cerrado — click para abrir':'🔓 Abierto — click para cerrar'}</button>
         </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${m.id} · ${m.date} · ${m.venue}</div>
         <div style="display:grid;grid-template-columns:1fr auto auto auto 1fr;gap:8px;align-items:center;margin-bottom:8px">
-          <select class="ko-select" id="ko-${m.id}-n1"><option value="">— Equipo 1 —</option>${mkOpts(res.n1)}</select>
+          <select class="ko-select" id="ko-${m.id}-n1"><option value="">— ${expN1} —</option>${mkOpts(res.n1||expN1)}</select>
           <input class="ri" style="width:40px;height:36px" type="number" min="0" max="20" id="ko-${m.id}-s1" value="${res.s1??''}" placeholder="-"/>
           <span style="color:var(--muted);font-weight:700">-</span>
           <input class="ri" style="width:40px;height:36px" type="number" min="0" max="20" id="ko-${m.id}-s2" value="${res.s2??''}" placeholder="-"/>
-          <select class="ko-select" id="ko-${m.id}-n2"><option value="">— Equipo 2 —</option>${mkOpts(res.n2)}</select>
+          <select class="ko-select" id="ko-${m.id}-n2"><option value="">— ${expN2} —</option>${mkOpts(res.n2||expN2)}</select>
         </div>
         <div style="font-size:10px;color:var(--muted);margin-bottom:8px">Marcador en tiempo regular (90 min). El ganador se calcula solo a partir de este marcador — si hay empate, completa penalties abajo.</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
