@@ -2095,12 +2095,16 @@ function buildStats(){
   const users = state.users.filter(u=>u.name!=='Admin');
   if(!users.length) return null;
 
-  // Per-user stats
+  // Per-user stats — now combines group stage AND all KO phases so the numbers
+  // keep moving once the group stage ends instead of freezing there.
   const userStats = users.map(u=>{
     const preds = u.predictions||{};
-    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0, streak=0, maxStreak=0, curStreak=0;
-    const matchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]);
-    matchesWithResult.forEach(m=>{
+    const koPreds = u.koPreds||{};
+    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0, koAciertos=0, koJugados=0, curStreak=0, maxStreak=0;
+
+    // Group stage matches (chronological order matters for streak calc)
+    const groupMatchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]);
+    groupMatchesWithResult.forEach(m=>{
       const pred=preds[m.id];
       const res=state.results[m.id];
       if(!pred||pred.s1===undefined||pred.s1==='') return;
@@ -2112,12 +2116,33 @@ function buildStats(){
       else{curStreak=0;}
       maxStreak=Math.max(maxStreak,curStreak);
     });
+
+    // KO phase matches — count as "acertado" (advances the streak) if the player
+    // scored any points on that match (correct bracket pick), tracked separately
+    // since KO scoring isn't a 3/4/5 exact-score system like groups.
+    KO_PHASES.forEach(ph=>{
+      ph.matches.forEach(m=>{
+        const res=state.results[m.id];
+        const pred=koPreds[m.id];
+        if(!res || !pred || !pred.n1 || !pred.n2) return;
+        koJugados++;
+        const sc=scoreKO(pred,res,ph.pts);
+        if(sc>0){koAciertos++;curStreak++;}
+        else{curStreak=0;}
+        maxStreak=Math.max(maxStreak,curStreak);
+      });
+    });
+
+    const totalJugados = jugados + koJugados;
+    const totalAciertos = resultados + koAciertos;
     const pts=calcPts(u);
     return{
       name:u.name,
       total:pts.total, grp:pts.grp, ko:pts.ko, champ:pts.champ,
-      exactos, cuatros, soloResultado, resultados, jugados,
-      pctAcierto: jugados>0?Math.round(resultados/jugados*100):0,
+      exactos, cuatros, soloResultado,
+      resultados: totalAciertos, jugados: totalJugados,
+      koAciertos, koJugados,
+      pctAcierto: totalJugados>0?Math.round(totalAciertos/totalJugados*100):0,
       pctExacto: jugados>0?Math.round(exactos/jugados*100):0,
       pctCuatro: jugados>0?Math.round(cuatros/jugados*100):0,
       maxStreak,
@@ -2125,7 +2150,7 @@ function buildStats(){
     };
   }).sort((a,b)=>b.total-a.total);
 
-  // Per-match stats — most/least predicted correctly
+  // Per-match stats — most/least predicted correctly, now across group + KO matches
   const matchStats = [];
   ALL_MATCHES_GROUP.forEach(m=>{
     const res=state.results[m.id]; if(!res) return;
@@ -2143,6 +2168,25 @@ function buildStats(){
       date:m.date, group:m.group,
       correct, exact, total,
       pct:Math.round(correct/total*100)
+    });
+  });
+  KO_PHASES.forEach(ph=>{
+    ph.matches.forEach(m=>{
+      const res=state.results[m.id]; if(!res) return;
+      let correct=0, total=0;
+      users.forEach(u=>{
+        const pred=(u.koPreds||{})[m.id];
+        if(!pred||!pred.n1||!pred.n2) return;
+        total++;
+        const sc=scoreKO(pred,res,ph.pts);
+        if(sc>0) correct++;
+      });
+      if(total>0) matchStats.push({
+        id:m.id, name:`${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1} vs ${res.n2} ${ALL_TEAMS_FLAGS[res.n2]||''}`,
+        date:m.date, group:ph.label,
+        correct, exact:0, total,
+        pct:Math.round(correct/total*100)
+      });
     });
   });
   matchStats.sort((a,b)=>b.pct-a.pct);
@@ -2280,7 +2324,7 @@ function renderStatsTo(elId){
 
     <!-- Ranking resultados acertados -->
     <div>
-      <div style="font-size:11px;font-weight:700;color:#86EFAC;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">✅ Resultados acertados</div>
+      <div style="font-size:11px;font-weight:700;color:#86EFAC;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">✅ Resultados acertados <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(grupos + llaves)</span></div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
           <td style="padding:4px 6px">#</td><td style="padding:4px 6px">Jugador</td>
