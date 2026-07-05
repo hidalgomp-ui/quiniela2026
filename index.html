@@ -500,6 +500,15 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div id="admin-users"></div>
     </div>
     <div class="adm-sec">
+      <div class="adm-title">🔀 Fusionar Jugadores Duplicados</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Combina las predicciones de dos cuentas del mismo jugador en una sola. Los datos de la cuenta "correcta" tienen prioridad si hay conflicto en el mismo partido; lo que le falte se completa con la cuenta duplicada. Al final, la cuenta duplicada se elimina.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select class="fi" id="merge-good-user" style="width:200px;margin:0"><option value="">— Cuenta correcta (se conserva) —</option></select>
+        <select class="fi" id="merge-dup-user" style="width:200px;margin:0"><option value="">— Cuenta duplicada (se borra) —</option></select>
+        <button class="sv-btn" style="background:rgba(200,16,46,0.1);border-color:rgba(200,16,46,0.3);color:#FCA5A5" onclick="mergeUsers()">🔀 Fusionar</button>
+      </div>
+    </div>
+    <div class="adm-sec">
       <div class="adm-title">⚙️ Configuración</div>
       <div class="fl">Código de acceso</div>
       <div class="code-display" id="access-code-display">---</div>
@@ -1868,6 +1877,7 @@ function renderAdmin(){
     const pts=calcPts(u);
     return`<div class="ur"><div><strong>${u.name}</strong><span style="font-size:12px;color:var(--muted2);margin-left:8px">${pts.total}pts</span><span style="font-size:11px;color:var(--muted);margin-left:8px">PIN:${u.pin||'?'}</span></div><div style="display:flex;gap:6px"><button class="sv-btn" style="font-size:11px;padding:4px 10px" onclick="resetUserPin('${esc(u.name)}')">Reset PIN</button><button class="del-btn" onclick="deleteUser('${esc(u.name)}')">Eliminar</button></div></div>`;
   }).join('');
+  populateMergeSelectors();
 
   // Champ select
   const sel=document.getElementById('champ-result-select');
@@ -2068,6 +2078,71 @@ async function resetUserPin(name){
   const snap=await getDoc(userRef(name));if(!snap.exists())return;
   const u=snap.data();u.pin=p;await saveUserToCloud(u);renderAdmin();toast(`PIN de ${name} actualizado`,'ok');
 }
+
+// ── FUSIONAR JUGADORES DUPLICADOS ────────────────────────────
+// Combina predictions/koPreds/champion de dos cuentas en una sola.
+// La cuenta "buena" (goodName) tiene prioridad en cualquier conflicto de
+// mismo match.id; lo que le falte se rellena con la cuenta duplicada.
+// Al terminar, borra la cuenta duplicada de Firestore.
+async function mergeUsers(){
+  const goodName = document.getElementById('merge-good-user').value;
+  const dupName = document.getElementById('merge-dup-user').value;
+  if(!goodName || !dupName){ toast('Selecciona ambas cuentas','err'); return; }
+  if(goodName===dupName){ toast('Selecciona dos cuentas diferentes','err'); return; }
+
+  const goodSnap = await getDoc(userRef(goodName));
+  const dupSnap = await getDoc(userRef(dupName));
+  if(!goodSnap.exists() || !dupSnap.exists()){ toast('No se encontró alguna de las cuentas','err'); return; }
+
+  const goodUser = goodSnap.data();
+  const dupUser = dupSnap.data();
+
+  const confirmMsg = `¿Fusionar "${dupName}" dentro de "${goodName}"?\n\n`+
+    `Se combinarán las predicciones de ambas cuentas (prioridad a "${goodName}" si hay conflicto).\n`+
+    `Luego "${dupName}" será ELIMINADA permanentemente.\n\nEsta acción no se puede deshacer.`;
+  if(!confirm(confirmMsg)) return;
+
+  // Merge predictions (group stage): good user's own predictions win, fill gaps from dup
+  const mergedPredictions = { ...(dupUser.predictions||{}) };
+  Object.entries(goodUser.predictions||{}).forEach(([matchId, pred])=>{
+    mergedPredictions[matchId] = pred; // good user's data overrides dup's for the same match
+  });
+
+  // Merge koPreds (KO phases): same priority logic
+  const mergedKoPreds = { ...(dupUser.koPreds||{}) };
+  Object.entries(goodUser.koPreds||{}).forEach(([matchId, pred])=>{
+    mergedKoPreds[matchId] = pred;
+  });
+
+  // Champion pick: keep good user's pick if they have one, otherwise use dup's
+  const mergedChampion = goodUser.champion || dupUser.champion || null;
+
+  const mergedUser = {
+    ...goodUser,
+    predictions: mergedPredictions,
+    koPreds: mergedKoPreds,
+    champion: mergedChampion,
+  };
+
+  await saveUserToCloud(mergedUser);
+  await deleteDoc(userRef(dupName));
+
+  toast(`"${dupName}" fusionado dentro de "${goodName}" y eliminado ✓`,'ok');
+  renderAdmin();
+  renderLeaderboard();
+}
+
+function populateMergeSelectors(){
+  const goodSel = document.getElementById('merge-good-user');
+  const dupSel = document.getElementById('merge-dup-user');
+  if(!goodSel || !dupSel) return;
+  const users = state.users.filter(u=>u.name!=='Admin');
+  goodSel.innerHTML = '<option value="">— Cuenta correcta (se conserva) —</option>' + users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('');
+  dupSel.innerHTML = '<option value="">— Cuenta duplicada (se borra) —</option>' + users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('');
+}
+
+window.mergeUsers = mergeUsers;
+
 async function changeAccessCode(){
   const v=document.getElementById('new-code-input').value.trim().toUpperCase();
   if(!v){toast('Escribe un código','err');return;}
