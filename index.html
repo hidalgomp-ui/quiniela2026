@@ -402,6 +402,7 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div style="font-size:12px;color:var(--muted2);margin-bottom:8px;">Viendo predicciones de:</div>
       <div class="grp-tabs" id="player-tabs"></div>
     </div>
+    <div class="grp-tabs" id="pred-phase-tabs" style="margin-bottom:14px;"></div>
     <div id="pred-content"></div>
     <div class="save-bar" id="pred-save-bar">
       <div class="save-info" id="pred-save-info">Ingresa tus predicciones</div>
@@ -1270,9 +1271,32 @@ function renderLeaderboard(){
 }
 
 // ── PREDICTIONS ────────────────────────────────────────────────
+// ── PREDICTIONS PHASE TABS ──────────────────────────────────
+// Lets the user jump directly to a phase (Grupos, 16avos, Octavos, etc.)
+// instead of scrolling through everything above. Purely a display filter —
+// doesn't touch scoring, saving, or any other logic.
+let _predActivePhase='all';
+function renderPredPhaseTabs(){
+  const tabs=document.getElementById('pred-phase-tabs');
+  if(!tabs) return;
+  const phaseList=[
+    {id:'all', label:'Todas'},
+    {id:'grupos', label:'⚽ Grupos'},
+    ...KO_PHASES.map(p=>({id:p.id, label:p.label})),
+  ];
+  tabs.innerHTML=phaseList.map(p=>`<button class="grp-tab${_predActivePhase===p.id?' active':''}" onclick="setPredPhase('${p.id}')">${p.label}</button>`).join('');
+}
+function setPredPhase(id){
+  _predActivePhase=id;
+  renderPredPhaseTabs();
+  renderPredictions();
+}
+window.setPredPhase=setPredPhase;
+
 function renderPredictions(){
   const wrap=document.getElementById('player-select-wrap');
   const bar=document.getElementById('pred-save-bar');
+  renderPredPhaseTabs();
   if(isAdmin){
     wrap.style.display='block';bar.style.display='none';
     renderPlayerTabs();
@@ -1317,6 +1341,7 @@ function renderPredContent(user,readOnly){
   lastComputedGPos = gPos;
   lastComputedTop8thirds = top8thirds;
 
+  if(_predActivePhase==='all' || _predActivePhase==='grupos'){
   GROUPS.forEach(g=>{
     // The mini standings table the user sees while editing still reflects THEIR
     // own predictions (so they can see "if my guesses are right, this is the table"),
@@ -1360,9 +1385,11 @@ function renderPredContent(user,readOnly){
     });
     html+='</div></div>';
   });
+  } // end grupos phase filter
 
   // ── KO PHASES ──
   KO_PHASES.forEach(ph=>{
+    if(_predActivePhase!=='all' && _predActivePhase!==ph.id) return;
     const open=isPhaseOpen(ph.id);
     if(!open&&!readOnly){
       html+=`<div class="phase-block"><div class="phase-hdr" style="border-left-color:var(--red)">${ph.label}</div>
