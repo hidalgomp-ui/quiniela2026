@@ -433,16 +433,23 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
   <div id="page-stats" class="page">
     <div class="sec-head" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;">
       <div><div class="sec-title bb">📊 ESTADÍSTICAS</div><div class="sec-sub">Se actualiza en tiempo real con cada resultado</div></div>
-      <button onclick="downloadReport()" style="padding:8px 16px;background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:var(--gold);font-size:12px;font-weight:700;cursor:pointer;">📄 Descargar reporte</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="downloadReport()" style="padding:8px 16px;background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);border-radius:8px;color:var(--gold);font-size:12px;font-weight:700;cursor:pointer;">📄 Descargar reporte</button>
+        <button onclick="downloadFinalReport()" style="padding:8px 16px;background:rgba(200,16,46,0.15);border:1px solid rgba(200,16,46,0.4);border-radius:8px;color:#FF8080;font-size:12px;font-weight:700;cursor:pointer;">🏆 Descargar Cierre de Torneo</button>
+      </div>
     </div>
     <div class="grp-tabs" id="stats-view-tabs">
       <button class="grp-tab active" onclick="setStatsView('global',this)">🌍 Global</button>
       <button class="grp-tab" onclick="setStatsView('byphase',this)">🏆 Por Fase</button>
+      <button class="grp-tab" onclick="setStatsView('final',this)">🏅 Cierre de Torneo</button>
     </div>
     <div id="stats-global-view"><div id="public-stats"></div></div>
     <div id="stats-byphase-view" style="display:none">
       <div class="grp-tabs" id="phase-stats-tabs"></div>
       <div id="phase-stats-content"></div>
+    </div>
+    <div id="stats-final-view" style="display:none">
+      <div id="final-stats-content"></div>
     </div>
   </div>
 
@@ -2466,11 +2473,278 @@ function buildStats(){
   return{userStats, matchStats, champRanking, totalMatches:matchStats.length};
 }
 
+// ── ESTADÍSTICAS DE CIERRE DE TORNEO ──────────────────────────
+// Categorías especiales para el resumen final: partidos con un solo acierto,
+// mayores sorpresas (con quién sí acertó), % de acierto general, goles
+// totales del torneo, mayor goleada, y un MVP calculado combinando varias
+// categorías. Se puede consultar en cualquier momento — se va llenando
+// conforme avanza el torneo, no solo al final.
+function buildFinalStats(){
+  const users = state.users.filter(u=>u.name!=='Admin');
+  if(!users.length) return null;
+
+  function groupUserCorrect(u,m,res){
+    const p=(u.predictions||{})[m.id];
+    if(!p||p.s1===undefined||p.s1==='') return false;
+    return scoreGroup(p,res) >= 3;
+  }
+  function koUserCorrect(u,m,res,ph){
+    const p=(u.koPreds||{})[m.id];
+    if(!p||!p.n1||!p.n2) return false;
+    return scoreKO(p,res,ph.pts) > 0;
+  }
+
+  // ── A. Partidos con UN SOLO acierto ──
+  const soloAciertoMatches=[];
+  ALL_MATCHES_GROUP.forEach(m=>{
+    const res=state.results[m.id]; if(!res) return;
+    const correctUsers=users.filter(u=>groupUserCorrect(u,m,res));
+    if(correctUsers.length===1){
+      soloAciertoMatches.push({name:`${m.t1} ${m.n1} vs ${m.n2} ${m.t2}`, date:m.date, phase:'Grupo '+m.group, winner:correctUsers[0].name});
+    }
+  });
+  KO_PHASES.forEach(ph=>{
+    ph.matches.forEach(m=>{
+      const res=state.results[m.id]; if(!res) return;
+      const correctUsers=users.filter(u=>koUserCorrect(u,m,res,ph));
+      if(correctUsers.length===1){
+        soloAciertoMatches.push({name:`${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1} vs ${res.n2} ${ALL_TEAMS_FLAGS[res.n2]||''}`, date:m.date, phase:ph.label, winner:correctUsers[0].name});
+      }
+    });
+  });
+
+  // ── B. Mayores sorpresas, con lista de quién sí acertó ──
+  const matchStatsWithWinners=[];
+  ALL_MATCHES_GROUP.forEach(m=>{
+    const res=state.results[m.id]; if(!res) return;
+    let total=0, correct=0; const winners=[];
+    users.forEach(u=>{
+      total++;
+      const p=(u.predictions||{})[m.id];
+      if(!p||p.s1===undefined||p.s1==='') return;
+      if(scoreGroup(p,res)>=3){correct++; winners.push(u.name);}
+    });
+    matchStatsWithWinners.push({name:`${m.t1} ${m.n1} vs ${m.n2} ${m.t2}`, date:m.date, phase:'Grupo '+m.group, correct, total, pct:total>0?Math.round(correct/total*100):0, winners});
+  });
+  KO_PHASES.forEach(ph=>{
+    ph.matches.forEach(m=>{
+      const res=state.results[m.id]; if(!res) return;
+      let total=0, correct=0; const winners=[];
+      users.forEach(u=>{
+        total++;
+        const p=(u.koPreds||{})[m.id];
+        if(!p||!p.n1||!p.n2) return;
+        if(scoreKO(p,res,ph.pts)>0){correct++; winners.push(u.name);}
+      });
+      matchStatsWithWinners.push({name:`${ALL_TEAMS_FLAGS[res.n1]||''} ${res.n1} vs ${res.n2} ${ALL_TEAMS_FLAGS[res.n2]||''}`, date:m.date, phase:ph.label, correct, total, pct:total>0?Math.round(correct/total*100):0, winners});
+    });
+  });
+  const surprises=[...matchStatsWithWinners].sort((a,b)=>a.pct-b.pct).slice(0,8);
+
+  // ── C. % de acierto general — reusa buildStats() que ya tiene denominadores fijos ──
+  const baseStats = buildStats();
+  const pctRanking = baseStats ? [...baseStats.userStats].sort((a,b)=>b.pctAcierto-a.pctAcierto) : [];
+
+  // ── D. Goles totales del torneo + ranking de predicción de goles ──
+  let totalGoals=0;
+  ALL_MATCHES_GROUP.forEach(m=>{ const r=state.results[m.id]; if(r&&r.s1!==undefined) totalGoals+=(parseInt(r.s1)+parseInt(r.s2)); });
+  KO_PHASES.forEach(ph=>{ ph.matches.forEach(m=>{ const r=state.results[m.id]; if(r&&r.s1!==undefined&&r.s1!==null) totalGoals+=(parseInt(r.s1)+parseInt(r.s2)); }); });
+
+  const goalStats = users.map(u=>{
+    let exactGoalCount=0, totalCompared=0;
+    ALL_MATCHES_GROUP.forEach(m=>{
+      const res=state.results[m.id]; if(!res||res.s1===undefined) return;
+      totalCompared++;
+      const p=(u.predictions||{})[m.id];
+      if(!p||p.s1===undefined||p.s1==='') return;
+      if((parseInt(p.s1)+parseInt(p.s2))===(parseInt(res.s1)+parseInt(res.s2))) exactGoalCount++;
+    });
+    KO_PHASES.forEach(ph=>{
+      ph.matches.forEach(m=>{
+        const res=state.results[m.id]; if(!res||res.s1===undefined||res.s1===null) return;
+        totalCompared++;
+        const p=(u.koPreds||{})[m.id];
+        if(!p||p.s1===undefined||p.s1==='') return;
+        if((parseInt(p.s1)+parseInt(p.s2))===(parseInt(res.s1)+parseInt(res.s2))) exactGoalCount++;
+      });
+    });
+    return{name:u.name, exactGoalCount, totalCompared, pctGoal: totalCompared>0?Math.round(exactGoalCount/totalCompared*100):0};
+  }).sort((a,b)=>b.exactGoalCount-a.exactGoalCount);
+
+  // ── E. Mayor goleada (más goles) y mayor margen ──
+  let biggestTotalGoals=null, biggestMargin=null;
+  function checkMatch(id,res,label,phLabel){
+    const s1=parseInt(res.s1), s2=parseInt(res.s2);
+    if(isNaN(s1)||isNaN(s2)) return;
+    const tot=s1+s2, margin=Math.abs(s1-s2);
+    const info={id,label,phase:phLabel,s1,s2,tot,margin};
+    if(!biggestTotalGoals||tot>biggestTotalGoals.tot) biggestTotalGoals=info;
+    if(!biggestMargin||margin>biggestMargin.margin) biggestMargin=info;
+  }
+  ALL_MATCHES_GROUP.forEach(m=>{ const r=state.results[m.id]; if(r&&r.s1!==undefined) checkMatch(m.id,r,`${m.t1} ${m.n1} vs ${m.n2} ${m.t2}`,'Grupo '+m.group); });
+  KO_PHASES.forEach(ph=>{ ph.matches.forEach(m=>{ const r=state.results[m.id]; if(r&&r.s1!==undefined&&r.s1!==null) checkMatch(m.id,r,`${ALL_TEAMS_FLAGS[r.n1]||''} ${r.n1} vs ${r.n2} ${ALL_TEAMS_FLAGS[r.n2]||''}`,ph.label); }); });
+
+  function whoGotExact(matchInfo){
+    if(!matchInfo) return [];
+    const isGroupMatch = ALL_MATCHES_GROUP.some(m=>m.id===matchInfo.id);
+    return users.filter(u=>{
+      const p = isGroupMatch ? (u.predictions||{})[matchInfo.id] : (u.koPreds||{})[matchInfo.id];
+      return p && p.s1!==undefined && p.s1!=='' && parseInt(p.s1)===matchInfo.s1 && parseInt(p.s2)===matchInfo.s2;
+    }).map(u=>u.name);
+  }
+  if(biggestTotalGoals) biggestTotalGoals.exactWinners = whoGotExact(biggestTotalGoals);
+  if(biggestMargin) biggestMargin.exactWinners = whoGotExact(biggestMargin);
+
+  // ── F. MVP del torneo — combina rankings de puntos, % acierto, exactos y racha ──
+  let mvp=null;
+  if(baseStats && baseStats.userStats.length){
+    const byTotal=[...baseStats.userStats].sort((a,b)=>b.total-a.total);
+    const byPct=[...baseStats.userStats].sort((a,b)=>b.pctAcierto-a.pctAcierto);
+    const byExact=[...baseStats.userStats].sort((a,b)=>b.exactos-a.exactos);
+    const byStreak=[...baseStats.userStats].sort((a,b)=>b.maxStreak-a.maxStreak);
+    const rankOf=(arr,name)=>arr.findIndex(u=>u.name===name)+1;
+    const combined=baseStats.userStats.map(u=>{
+      const r1=rankOf(byTotal,u.name), r2=rankOf(byPct,u.name), r3=rankOf(byExact,u.name), r4=rankOf(byStreak,u.name);
+      return{name:u.name, score:r1+r2+r3+r4, r1,r2,r3,r4, total:u.total, pctAcierto:u.pctAcierto, exactos:u.exactos, maxStreak:u.maxStreak};
+    }).sort((a,b)=>a.score-b.score);
+    mvp=combined[0];
+    mvp.breakdown=combined;
+  }
+
+  return{soloAciertoMatches, surprises, pctRanking, totalGoals, goalStats, biggestTotalGoals, biggestMargin, mvp};
+}
+
 function renderAdminStats(){
   renderStatsTo('admin-stats');
   renderStatsTo('public-stats');
   if(document.getElementById('phase-stats-content')) renderPhaseStats();
+  if(document.getElementById('final-stats-content') && _statsView==='final') renderFinalStats();
 }
+
+// ── CIERRE DE TORNEO — render ─────────────────────────────────
+function renderFinalStats(){
+  const el=document.getElementById('final-stats-content');
+  if(!el) return;
+  const fs=buildFinalStats();
+  if(!fs){ el.innerHTML='<div class="empty">Sin datos aún</div>'; return; }
+
+  const colors=['#D4AF37','#94A3B8','#CD7C3E'];
+  let html='';
+
+  // MVP destacado
+  if(fs.mvp){
+    html+=`<div style="background:linear-gradient(160deg,rgba(212,175,55,0.12) 0%,var(--surface) 100%);border:1px solid rgba(212,175,55,0.4);border-radius:16px;padding:20px;margin-bottom:16px;text-align:center;">
+      <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:6px">🏅 MVP DEL TORNEO</div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--white);letter-spacing:.04em;margin-bottom:8px">${fs.mvp.name}</div>
+      <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted2);">
+        <span>🏆 Total: <strong style="color:var(--gold)">${fs.mvp.total}pts</strong></span>
+        <span>✅ Acierto: <strong style="color:#86EFAC">${fs.mvp.pctAcierto}%</strong></span>
+        <span>🎯 Exactos: <strong style="color:#FCA87A">${fs.mvp.exactos}</strong></span>
+        <span>🔥 Racha: <strong style="color:#93C5FD">${fs.mvp.maxStreak}</strong></span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">Calculado combinando el ranking de puntos totales, % de acierto, marcadores exactos y racha máxima</div>
+    </div>`;
+  }
+
+  // Goles totales del torneo
+  html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--gold);letter-spacing:.04em">${fs.totalGoals}</div>
+      <div style="font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">⚽ Goles totales del torneo</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:36px;color:#FCA87A;letter-spacing:.04em">${fs.soloAciertoMatches.length}</div>
+      <div style="font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.06em;margin-top:2px">🎯 Partidos con un solo acierto</div>
+    </div>
+  </div>`;
+
+  // Mayor goleada / mayor margen
+  if(fs.biggestTotalGoals || fs.biggestMargin){
+    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">`;
+    if(fs.biggestTotalGoals){
+      const m=fs.biggestTotalGoals;
+      html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">⚽ Partido con más goles</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:2px">${m.label}</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--gold)">${m.s1}-${m.s2} <span style="font-size:13px;color:var(--muted2);font-family:'Inter',sans-serif">(${m.tot} goles) · ${m.phase}</span></div>
+        ${m.exactWinners.length?`<div style="font-size:11px;color:#86EFAC;margin-top:6px">✓ Acertaron el marcador exacto: ${m.exactWinners.join(', ')}</div>`:`<div style="font-size:11px;color:var(--muted);margin-top:6px">Nadie acertó el marcador exacto</div>`}
+      </div>`;
+    }
+    if(fs.biggestMargin){
+      const m=fs.biggestMargin;
+      html+=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-size:11px;font-weight:700;color:#FCA87A;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">💥 Mayor goleada (margen)</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:2px">${m.label}</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;color:#FCA87A">${m.s1}-${m.s2} <span style="font-size:13px;color:var(--muted2);font-family:'Inter',sans-serif">(margen de ${m.margin}) · ${m.phase}</span></div>
+        ${m.exactWinners.length?`<div style="font-size:11px;color:#86EFAC;margin-top:6px">✓ Acertaron el marcador exacto: ${m.exactWinners.join(', ')}</div>`:`<div style="font-size:11px;color:var(--muted);margin-top:6px">Nadie acertó el marcador exacto</div>`}
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+
+  // % de acierto general (ranking completo)
+  html+=`<div style="margin-bottom:16px;">
+    <div style="font-size:11px;font-weight:700;color:#86EFAC;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">✅ % de acierto total — ranking completo</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+        <td style="padding:5px 8px">#</td><td style="padding:5px 8px">Jugador</td>
+        <td style="padding:5px 8px;text-align:center">Aciertos</td><td style="padding:5px 8px;text-align:center">% Acierto</td>
+      </tr>
+      ${fs.pctRanking.map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+        <td style="padding:6px 8px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+        <td style="padding:6px 8px;font-weight:600">${u.name}</td>
+        <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.resultados}/${u.jugados}</td>
+        <td style="padding:6px 8px;text-align:center;color:#86EFAC;font-weight:700">${u.pctAcierto}%</td>
+      </tr>`).join('')}
+    </table>
+  </div>`;
+
+  // Ranking de predicción de goles
+  html+=`<div style="margin-bottom:16px;">
+    <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">⚽ Mejor predictor de goles totales por partido</div>
+    <div style="font-size:10px;color:var(--muted);margin-bottom:8px">Acertó la suma exacta de goles del partido (ej. predijo 2-1 y el real fue 1-2 — la suma de 3 coincide)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+        <td style="padding:5px 8px">#</td><td style="padding:5px 8px">Jugador</td>
+        <td style="padding:5px 8px;text-align:center">Aciertos</td><td style="padding:5px 8px;text-align:center">%</td>
+      </tr>
+      ${fs.goalStats.map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+        <td style="padding:6px 8px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+        <td style="padding:6px 8px;font-weight:600">${u.name}</td>
+        <td style="padding:6px 8px;text-align:center;color:var(--gold);font-weight:700">${u.exactGoalCount}<span style="color:var(--muted);font-weight:400">/${u.totalCompared}</span></td>
+        <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.pctGoal}%</td>
+      </tr>`).join('')}
+    </table>
+  </div>`;
+
+  // Partidos con un solo acierto
+  if(fs.soloAciertoMatches.length){
+    html+=`<div style="margin-bottom:16px;">
+      <div style="font-size:11px;font-weight:700;color:#FCA87A;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🎯 Partidos donde SOLO 1 persona acertó</div>
+      ${fs.soloAciertoMatches.map(m=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        <span style="color:var(--muted2)">${m.name} <span style="color:var(--muted);font-size:10px">(${m.phase})</span></span>
+        <span style="color:var(--gold);font-weight:700">👑 ${m.winner}</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  // Mayores sorpresas con quién acertó
+  if(fs.surprises.length){
+    html+=`<div style="margin-bottom:16px;">
+      <div style="font-size:11px;font-weight:700;color:#FCA5A5;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">😱 Mayores sorpresas — casi nadie acertó</div>
+      ${fs.surprises.map(m=>`<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:var(--muted2)">${m.name} <span style="color:var(--muted);font-size:10px">(${m.phase})</span></span>
+          <span style="color:#FCA5A5;font-weight:700">${m.pct}% <span style="color:var(--muted);font-weight:400">(${m.correct}/${m.total})</span></span>
+        </div>
+        ${m.winners.length?`<div style="font-size:10px;color:#86EFAC;margin-top:3px">✓ Le atinaron: ${m.winners.join(', ')}</div>`:''}
+      </div>`).join('')}
+    </div>`;
+  }
+
+  el.innerHTML=html;
+}
+window.renderFinalStats=renderFinalStats;
 
 // ── PER-PHASE STATS ──────────────────────────────────────────
 let _statsView='global';
@@ -2482,7 +2756,9 @@ function setStatsView(view,btn){
   if(btn) btn.classList.add('active');
   document.getElementById('stats-global-view').style.display = view==='global' ? 'block':'none';
   document.getElementById('stats-byphase-view').style.display = view==='byphase' ? 'block':'none';
+  document.getElementById('stats-final-view').style.display = view==='final' ? 'block':'none';
   if(view==='byphase') renderPhaseStats();
+  if(view==='final') renderFinalStats();
 }
 
 function setPhaseStatsTab(id,btn){
@@ -2877,6 +3153,142 @@ function downloadReport(){
   document.body.removeChild(a); URL.revokeObjectURL(url);
   toast('Reporte descargado 📊','ok');
 }
+
+// ── DESCARGA — CIERRE DE TORNEO ────────────────────────────────
+function downloadFinalReport(){
+  const fs=buildFinalStats();
+  if(!fs){ toast('Sin datos para reportar','err'); return; }
+  const now=new Date().toLocaleString('es',{timeZone:'Asia/Kuwait',dateStyle:'full',timeStyle:'short'});
+  const colors=['#D4AF37','#94A3B8','#CD7C3E'];
+
+  const tableSection=(title,color,rows,headers)=>`
+    <div class="section">
+      <div class="section-title" style="color:${color}">${title}</div>
+      <table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`;
+
+  const pctRows = fs.pctRanking.map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td>${u.resultados}/${u.jugados}</td><td class="pts">${u.pctAcierto}%</td>
+  </tr>`).join('');
+
+  const goalRows = fs.goalStats.map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td>${u.exactGoalCount}/${u.totalCompared}</td><td class="pts">${u.pctGoal}%</td>
+  </tr>`).join('');
+
+  const soloRows = fs.soloAciertoMatches.map(m=>`<tr>
+    <td>${m.name}</td><td>${m.phase}</td><td class="pts" style="color:#D4AF37">👑 ${m.winner}</td>
+  </tr>`).join('');
+
+  const surpriseRows = fs.surprises.map(m=>`<tr>
+    <td>${m.name}</td><td>${m.phase}</td><td class="pts">${m.pct}%</td><td style="font-size:11px;color:#86EFAC">${m.winners.join(', ')||'—'}</td>
+  </tr>`).join('');
+
+  const mvpBreakdownRows = fs.mvp && fs.mvp.breakdown ? fs.mvp.breakdown.slice(0,10).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td class="pts">${u.total}pts</td><td>${u.pctAcierto}%</td><td>${u.exactos}</td><td>${u.maxStreak}🔥</td>
+  </tr>`).join('') : '';
+
+  const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  <title>Cierre de Torneo — Quiniela 2026 Gremlin</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#0D1B2A;color:#F5F0E8;font-family:Arial,sans-serif;padding:0;}
+    .header{background:linear-gradient(135deg,#C8102E 0%,#1A3A6B 50%,#0D1B2A 100%);border-bottom:4px solid #D4AF37;padding:36px 32px;text-align:center;}
+    .header .trophy{font-size:56px;margin-bottom:8px;}
+    .header .title{font-size:42px;font-weight:900;letter-spacing:.06em;color:#D4AF37;}
+    .header .sub{font-size:14px;color:#F5F0E8;margin-top:6px;opacity:.9;}
+    .header .date{font-size:12px;color:#94a3b8;margin-top:10px;}
+    .mvp-card{margin:28px 32px;background:linear-gradient(160deg,rgba(212,175,55,0.15) 0%,#1C2E45 100%);border:2px solid #D4AF37;border-radius:20px;padding:32px;text-align:center;}
+    .mvp-label{font-size:12px;color:#D4AF37;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:8px;}
+    .mvp-name{font-size:48px;font-weight:900;color:#F5F0E8;letter-spacing:.04em;margin-bottom:12px;}
+    .mvp-stats{display:flex;justify-content:center;gap:24px;flex-wrap:wrap;font-size:13px;color:#94a3b8;}
+    .mvp-stats strong{color:#F5F0E8;font-size:16px;}
+    .stats-bar{display:flex;gap:0;background:#122A52;border-bottom:1px solid rgba(255,255,255,0.1);margin:0 32px;border-radius:12px;overflow:hidden;}
+    .stat{flex:1;padding:18px;text-align:center;border-right:1px solid rgba(255,255,255,0.08);}
+    .stat:last-child{border-right:none;}
+    .stat-val{font-size:30px;font-weight:900;color:#D4AF37;}
+    .stat-lbl{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-top:2px;}
+    .content{padding:24px 32px;}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;}
+    .section{background:#1C2E45;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:16px;}
+    .section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.08);}
+    table{width:100%;border-collapse:collapse;font-size:12px;}
+    th{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;padding:6px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.08);}
+    td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,0.05);}
+    .pts{font-weight:700;color:#D4AF37;font-size:14px;}
+    tr.gold td:first-child{color:#D4AF37;font-weight:700;}
+    tr.silver td:first-child{color:#94A3B8;font-weight:700;}
+    tr.bronze td:first-child{color:#CD7C3E;font-weight:700;}
+    tr.gold{background:rgba(212,175,55,0.06);}
+    tr.silver{background:rgba(148,163,184,0.04);}
+    tr.bronze{background:rgba(205,124,62,0.04);}
+    .footer{padding:20px 32px;text-align:center;font-size:11px;color:#475569;border-top:1px solid rgba(255,255,255,0.08);margin-top:8px;}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+  </style></head><body>
+  <div class="header">
+    <div class="trophy">🏆</div>
+    <div class="title">CIERRE DE TORNEO</div>
+    <div class="sub">Quiniela Mundial 2026 — Gremlin</div>
+    <div class="date">${now}</div>
+  </div>
+
+  ${fs.mvp?`<div class="mvp-card">
+    <div class="mvp-label">🏅 MVP del Torneo</div>
+    <div class="mvp-name">${fs.mvp.name}</div>
+    <div class="mvp-stats">
+      <span>Total: <strong>${fs.mvp.total}pts</strong></span>
+      <span>Acierto: <strong>${fs.mvp.pctAcierto}%</strong></span>
+      <span>Exactos: <strong>${fs.mvp.exactos}</strong></span>
+      <span>Racha: <strong>${fs.mvp.maxStreak}🔥</strong></span>
+    </div>
+  </div>`:''}
+
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-val">${fs.totalGoals}</div><div class="stat-lbl">⚽ Goles del torneo</div></div>
+    <div class="stat"><div class="stat-val">${fs.soloAciertoMatches.length}</div><div class="stat-lbl">🎯 Solo 1 acertó</div></div>
+    <div class="stat"><div class="stat-val">${fs.pctRanking[0]?fs.pctRanking[0].pctAcierto+'%':'—'}</div><div class="stat-lbl">✅ Mejor % acierto</div></div>
+    <div class="stat"><div class="stat-val">${fs.biggestTotalGoals?fs.biggestTotalGoals.s1+'-'+fs.biggestTotalGoals.s2:'—'}</div><div class="stat-lbl">⚽ Partido con más goles</div></div>
+  </div>
+
+  <div class="content">
+    ${fs.mvp?`<div class="grid" style="grid-template-columns:1fr">
+      ${tableSection('🏅 Ranking MVP — combinado (puntos + % acierto + exactos + racha)','#D4AF37',mvpBreakdownRows,['#','Jugador','Puntos','% Acierto','Exactos','Racha'])}
+    </div>`:''}
+    <div class="grid">
+      ${tableSection('✅ % de acierto total — ranking completo','#86EFAC',pctRows,['#','Jugador','Aciertos','% Acierto'])}
+      ${tableSection('⚽ Mejor predictor de goles totales','#D4AF37',goalRows,['#','Jugador','Aciertos','%'])}
+    </div>
+    ${fs.biggestTotalGoals||fs.biggestMargin?`<div class="grid">
+      ${fs.biggestTotalGoals?`<div class="section"><div class="section-title" style="color:#D4AF37">⚽ Partido con más goles</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">${fs.biggestTotalGoals.label}</div>
+        <div style="font-size:22px;font-weight:900;color:#D4AF37;margin-bottom:6px">${fs.biggestTotalGoals.s1}-${fs.biggestTotalGoals.s2} <span style="font-size:12px;color:#94a3b8;font-weight:400">(${fs.biggestTotalGoals.tot} goles, ${fs.biggestTotalGoals.phase})</span></div>
+        <div style="font-size:11px;color:#86EFAC">${fs.biggestTotalGoals.exactWinners.length?'✓ '+fs.biggestTotalGoals.exactWinners.join(', '):'Nadie acertó el marcador exacto'}</div>
+      </div>`:''}
+      ${fs.biggestMargin?`<div class="section"><div class="section-title" style="color:#FCA87A">💥 Mayor goleada (margen)</div>
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">${fs.biggestMargin.label}</div>
+        <div style="font-size:22px;font-weight:900;color:#FCA87A;margin-bottom:6px">${fs.biggestMargin.s1}-${fs.biggestMargin.s2} <span style="font-size:12px;color:#94a3b8;font-weight:400">(margen ${fs.biggestMargin.margin}, ${fs.biggestMargin.phase})</span></div>
+        <div style="font-size:11px;color:#86EFAC">${fs.biggestMargin.exactWinners.length?'✓ '+fs.biggestMargin.exactWinners.join(', '):'Nadie acertó el marcador exacto'}</div>
+      </div>`:''}
+    </div>`:''}
+    ${fs.soloAciertoMatches.length?`<div class="grid" style="grid-template-columns:1fr">
+      ${tableSection('🎯 Partidos donde SOLO 1 persona acertó','#FCA87A',soloRows,['Partido','Fase','Ganador'])}
+    </div>`:''}
+    ${fs.surprises.length?`<div class="grid" style="grid-template-columns:1fr">
+      ${tableSection('😱 Mayores sorpresas del torneo','#FCA5A5',surpriseRows,['Partido','Fase','% Acierto','Quién acertó'])}
+    </div>`:''}
+  </div>
+  <div class="footer">Quiniela Mundial 2026 — Gremlin · Cierre de torneo generado el ${now}</div>
+  </body></html>`;
+
+  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=`Cierre_Torneo_Quiniela_2026_${new Date().toISOString().slice(0,10)}.html`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+  toast('Cierre de torneo descargado 🏆','ok');
+}
+window.downloadFinalReport=downloadFinalReport;
 
 
 function downloadMyQuiniela(){
