@@ -1069,6 +1069,50 @@ function scoreKO(pred,res,pts){
   }
   return p;
 }
+
+// Classifies the SCORELINE accuracy of a KO prediction into the same
+// conceptual buckets used for group-stage stats: 'exacto' (both goals right),
+// 'parcial' (winner right + one goal right), 'solo_resultado' (winner right,
+// no goals right), or null (either no team matched, or no score to compare).
+// This is independent of the penalty bonus, which is tracked separately.
+function classifyKOScore(pred,res){
+  if(!pred||!res) return null;
+  const pn1=pred.n1||'',pn2=pred.n2||'',rn1=res.n1||'',rn2=res.n2||'';
+  if(!pn1||!pn2||!rn1||!rn2) return null;
+
+  const full=pn1===rn1&&pn2===rn2;
+  const inv=pn1===rn2&&pn2===rn1;
+  const one=(pn1===rn1&&pn2!==rn2)||(pn2===rn2&&pn1!==rn1);
+  if(!full && !inv && !one) return null; // no team matched at all
+
+  const ps1=pred.s1, ps2=pred.s2, rs1=res.s1, rs2=res.s2;
+  const hasPredScore = ps1!==undefined && ps1!=='' && ps2!==undefined && ps2!=='';
+  const hasResScore  = rs1!==undefined && rs1!==null && rs2!==undefined && rs2!==null;
+  if(!hasPredScore || !hasResScore) return null;
+
+  const a1=parseInt(ps1),a2=parseInt(ps2),b1=parseInt(rs1),b2=parseInt(rs2);
+
+  if(full){
+    if(winnerFromScore(a1,a2)!==winnerFromScore(b1,b2)) return null;
+    if(a1===b1&&a2===b2) return 'exacto';
+    if(a1===b1||a2===b2) return 'parcial';
+    return 'solo_resultado';
+  }
+  if(inv){
+    if(winnerFromScore(a2,a1)!==winnerFromScore(b1,b2)) return null;
+    if(a2===b1&&a1===b2) return 'exacto';
+    if(a2===b1||a1===b2) return 'parcial';
+    return 'solo_resultado';
+  }
+  if(one){
+    const correctIsN1 = pn1===rn1;
+    const predGoalsForMatched = correctIsN1 ? a1 : a2;
+    const resGoalsForMatched  = correctIsN1 ? b1 : b2;
+    return predGoalsForMatched===resGoalsForMatched ? 'exacto' : 'solo_resultado';
+  }
+  return null;
+}
+
 function calcPts(user){
   let grp=0,ko=0,pen=0,champ=0;
   ALL_MATCHES_GROUP.forEach(m=>{grp+=scoreGroup((user.predictions||{})[m.id],state.results[m.id]);});
@@ -2202,7 +2246,10 @@ function buildStats(){
   const userStats = users.map(u=>{
     const preds = u.predictions||{};
     const koPreds = u.koPreds||{};
-    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0, koAciertos=0, koJugados=0, curStreak=0, maxStreak=0;
+    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0;
+    let koAciertos=0, koJugados=0; // "llave correcta" tracking (equipo en posición), separate category
+    let penAciertos=0, penJugados=0; // penalty shootout picks, its own separate category
+    let curStreak=0, maxStreak=0;
 
     // Group stage matches (chronological order matters for streak calc)
     const groupMatchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]);
@@ -2219,34 +2266,56 @@ function buildStats(){
       maxStreak=Math.max(maxStreak,curStreak);
     });
 
-    // KO phase matches — count as "acertado" (advances the streak) if the player
-    // scored any points on that match (correct bracket pick), tracked separately
-    // since KO scoring isn't a 3/4/5 exact-score system like groups.
+    // KO phase matches — the scoreline (marcador) accuracy is classified into the
+    // exact same exacto/parcial/solo_resultado buckets as group stage, so those
+    // stats keep accumulating across the whole tournament. "Llave correcta" (did
+    // they pick the right team/teams to advance) is tracked separately in
+    // koAciertos, and penalty shootout picks are their own separate category —
+    // none of these three get mixed together.
     KO_PHASES.forEach(ph=>{
       ph.matches.forEach(m=>{
         const res=state.results[m.id];
         const pred=koPreds[m.id];
         if(!res || !pred || !pred.n1 || !pred.n2) return;
+
         koJugados++;
         const sc=scoreKO(pred,res,ph.pts);
-        if(sc>0){koAciertos++;curStreak++;}
-        else{curStreak=0;}
+        if(sc>0){koAciertos++;}
+
+        // Scoreline classification (mirrors group-stage 3/4/5pt categories)
+        const cls = classifyKOScore(pred,res);
+        if(cls){
+          jugados++;
+          if(cls==='exacto'){exactos++;resultados++;curStreak++;}
+          else if(cls==='parcial'){cuatros++;resultados++;curStreak++;}
+          else if(cls==='solo_resultado'){soloResultado++;resultados++;curStreak++;}
+        } else {
+          curStreak=0;
+        }
         maxStreak=Math.max(maxStreak,curStreak);
+
+        // Penalty shootout pick tracking — own separate category, never mixed
+        // into exactos/cuatros/resultados above.
+        if(res.penWinner){
+          penJugados++;
+          if(pred.penPick===res.penWinner) penAciertos++;
+        }
       });
     });
 
-    const totalJugados = jugados + koJugados;
-    const totalAciertos = resultados + koAciertos;
     const pts=calcPts(u);
     return{
       name:u.name,
       total:pts.total, grp:pts.grp, ko:pts.ko, champ:pts.champ,
       exactos, cuatros, soloResultado,
-      resultados: totalAciertos, jugados: totalJugados,
+      resultados, jugados,
       koAciertos, koJugados,
-      pctAcierto: totalJugados>0?Math.round(totalAciertos/totalJugados*100):0,
+      penAciertos, penJugados,
+      pctAcierto: jugados>0?Math.round(resultados/jugados*100):0,
       pctExacto: jugados>0?Math.round(exactos/jugados*100):0,
       pctCuatro: jugados>0?Math.round(cuatros/jugados*100):0,
+      pctLlave: koJugados>0?Math.round(koAciertos/koJugados*100):0,
+      pctPenalty: penJugados>0?Math.round(penAciertos/penJugados*100):0,
       maxStreak,
       champion:u.champion||'—'
     };
@@ -2495,6 +2564,44 @@ function renderStatsTo(elId){
     </div>
   </div>
 
+  <!-- Aciertos de llave y penalties — categorías separadas de marcador -->
+  ${s.userStats.some(u=>u.koJugados>0)?`
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+    <div>
+      <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🔗 Aciertos de llave (equipo correcto)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          <td style="padding:4px 6px">#</td><td style="padding:4px 6px">Jugador</td>
+          <td style="padding:4px 6px;text-align:center">Aciertos</td>
+          <td style="padding:4px 6px;text-align:center">% Llave</td>
+        </tr>
+        ${[...s.userStats].filter(u=>u.koJugados>0).sort((a,b)=>b.koAciertos-a.koAciertos).map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+          <td style="padding:5px 6px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+          <td style="padding:5px 6px;font-weight:600">${u.name}</td>
+          <td style="padding:5px 6px;text-align:center;color:var(--gold);font-weight:700">${u.koAciertos}<span style="color:var(--muted);font-weight:400">/${u.koJugados}</span></td>
+          <td style="padding:5px 6px;text-align:center;color:${u.pctLlave>=50?'var(--gold)':'var(--muted2)'};font-weight:700">${u.pctLlave}%</td>
+        </tr>`).join('')}
+      </table>
+    </div>
+    ${s.userStats.some(u=>u.penJugados>0)?`
+    <div>
+      <div style="font-size:11px;font-weight:700;color:#FF8080;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">🥅 Aciertos de penalties</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          <td style="padding:4px 6px">#</td><td style="padding:4px 6px">Jugador</td>
+          <td style="padding:4px 6px;text-align:center">Aciertos</td>
+          <td style="padding:4px 6px;text-align:center">% Pen.</td>
+        </tr>
+        ${[...s.userStats].filter(u=>u.penJugados>0).sort((a,b)=>b.penAciertos-a.penAciertos).map((u,i)=>`<tr style="border-top:1px solid var(--border)">
+          <td style="padding:5px 6px;color:${i<3?colors[i]:'var(--muted)'};font-weight:700">${i+1}</td>
+          <td style="padding:5px 6px;font-weight:600">${u.name}</td>
+          <td style="padding:5px 6px;text-align:center;color:#FF8080;font-weight:700">${u.penAciertos}<span style="color:var(--muted);font-weight:400">/${u.penJugados}</span></td>
+          <td style="padding:5px 6px;text-align:center;color:${u.pctPenalty>=50?'#FF8080':'var(--muted2)'};font-weight:700">${u.pctPenalty}%</td>
+        </tr>`).join('')}
+      </table>
+    </div>`:'<div></div>'}
+  </div>`:''}
+
   <!-- Partidos más/menos acertados -->
   ${s.matchStats.length?`
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
@@ -2563,6 +2670,14 @@ function downloadReport(){
 
   const rankingStreak=[...s.userStats].sort((a,b)=>b.maxStreak-a.maxStreak).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
     <td>${i+1}</td><td>${u.name}</td><td class="pts">${u.maxStreak} 🔥</td>
+  </tr>`).join('');
+
+  const rankingLlave=[...s.userStats].filter(u=>u.koJugados>0).sort((a,b)=>b.koAciertos-a.koAciertos).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td>${u.koAciertos}/${u.koJugados}</td><td class="pts">${u.pctLlave}%</td>
+  </tr>`).join('');
+
+  const rankingPenalty=[...s.userStats].filter(u=>u.penJugados>0).sort((a,b)=>b.penAciertos-a.penAciertos).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
+    <td>${i+1}</td><td>${u.name}</td><td>${u.penAciertos}/${u.penJugados}</td><td class="pts">${u.pctPenalty}%</td>
   </tr>`).join('');
 
   const topMatches=s.matchStats.slice(0,8).map(m=>`<tr>
@@ -2642,6 +2757,10 @@ function downloadReport(){
       ${tableSection('🔥 Mayor racha de aciertos','#93C5FD',rankingStreak,['#','Jugador','Racha máx.'])}
     </div>
     <style>.grid:nth-of-type(2){grid-template-columns:1fr 1fr 1fr}</style>
+    ${rankingLlave||rankingPenalty?`<div class="grid" style="grid-template-columns:${rankingLlave&&rankingPenalty?'1fr 1fr':'1fr'}">
+      ${rankingLlave?tableSection('🔗 Aciertos de llave (equipo correcto)','#D4AF37',rankingLlave,['#','Jugador','Aciertos','% Llave']):''}
+      ${rankingPenalty?tableSection('🥅 Aciertos de penalties','#FF8080',rankingPenalty,['#','Jugador','Aciertos','% Pen.']):''}
+    </div>`:''}
     ${s.matchStats.length?`<div class="grid">
       ${tableSection('⭐ Partidos más acertados','#86EFAC',topMatches,['Partido','Fecha','Aciertos','%'])}
       ${tableSection('😱 Partidos menos acertados (sorpresas)','#FCA5A5',hardMatches,['Partido','Fecha','Aciertos','%'])}
