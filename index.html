@@ -501,6 +501,15 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div id="admin-users"></div>
     </div>
     <div class="adm-sec">
+      <div class="adm-title">🔍 Diagnóstico — Predicciones Faltantes</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Selecciona un jugador para ver exactamente cuáles partidos (con resultado ya cargado) le faltan por predecir — útil para verificar discrepancias en las estadísticas.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <select class="fi" id="diag-user-select" style="width:220px;margin:0"><option value="">— Selecciona jugador —</option></select>
+        <button class="sv-btn" onclick="runDiagnostic()">🔍 Diagnosticar</button>
+      </div>
+      <div id="diag-results"></div>
+    </div>
+    <div class="adm-sec">
       <div class="adm-title">🔀 Fusionar Jugadores Duplicados</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Combina las predicciones de dos cuentas del mismo jugador en una sola. Los datos de la cuenta "correcta" tienen prioridad si hay conflicto en el mismo partido; lo que le falte se completa con la cuenta duplicada. Al final, la cuenta duplicada se elimina.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -2206,13 +2215,80 @@ async function mergeUsers(){
 function populateMergeSelectors(){
   const goodSel = document.getElementById('merge-good-user');
   const dupSel = document.getElementById('merge-dup-user');
-  if(!goodSel || !dupSel) return;
+  const diagSel = document.getElementById('diag-user-select');
   const users = state.users.filter(u=>u.name!=='Admin');
-  goodSel.innerHTML = '<option value="">— Cuenta correcta (se conserva) —</option>' + users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('');
-  dupSel.innerHTML = '<option value="">— Cuenta duplicada (se borra) —</option>' + users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('');
+  const opts = users.map(u=>`<option value="${u.name}">${u.name}</option>`).join('');
+  if(goodSel) goodSel.innerHTML = '<option value="">— Cuenta correcta (se conserva) —</option>' + opts;
+  if(dupSel) dupSel.innerHTML = '<option value="">— Cuenta duplicada (se borra) —</option>' + opts;
+  if(diagSel){
+    const prevVal = diagSel.value;
+    diagSel.innerHTML = '<option value="">— Selecciona jugador —</option>' + opts;
+    if(prevVal) diagSel.value = prevVal;
+  }
 }
 
 window.mergeUsers = mergeUsers;
+
+// ── DIAGNÓSTICO: qué partidos le faltan exactamente a un jugador ─────
+// Compara, partido por partido, todos los que ya tienen resultado real cargado
+// contra lo que el jugador tiene guardado en su cuenta. Muestra la lista exacta
+// de lo que falta (o está incompleto: falta marcador, falta penalti si hubo
+// empate, etc.) para poder verificar si es un olvido real o un problema técnico.
+function runDiagnostic(){
+  const name = document.getElementById('diag-user-select').value;
+  const out = document.getElementById('diag-results');
+  if(!name){ toast('Selecciona un jugador','err'); return; }
+  const user = state.users.find(u=>u.name===name);
+  if(!user){ out.innerHTML='<div class="empty">Jugador no encontrado</div>'; return; }
+
+  const preds = user.predictions||{};
+  const koPreds = user.koPreds||{};
+  const missingGroup = [];
+  const missingKO = [];
+
+  ALL_MATCHES_GROUP.forEach(m=>{
+    if(!state.results[m.id]) return; // sin resultado real, no cuenta
+    const p = preds[m.id];
+    if(!p || p.s1===undefined || p.s1==='' || p.s2===undefined || p.s2===''){
+      missingGroup.push(`${m.t1} ${m.n1} vs ${m.n2} ${m.t2} (Grupo ${m.group}, ${m.id})`);
+    }
+  });
+
+  KO_PHASES.forEach(ph=>{
+    ph.matches.forEach(m=>{
+      const res = state.results[m.id];
+      if(!res) return; // sin resultado real, no cuenta
+      const p = koPreds[m.id];
+      if(!p || !p.n1 || !p.n2 || p.s1===undefined || p.s1==='' || p.s2===undefined || p.s2===''){
+        missingKO.push(`${ph.label}: ${res.n1||'?'} vs ${res.n2||'?'} (${m.id})`);
+      } else {
+        // Tiene equipos y marcador, pero si el resultado real fue empate y no puso penalti
+        const isDrawPred = parseInt(p.s1)===parseInt(p.s2);
+        if(res.penWinner && isDrawPred && !p.penPick){
+          missingKO.push(`${ph.label}: ${res.n1||'?'} vs ${res.n2||'?'} — falta elegir ganador de penalties (${m.id})`);
+        }
+      }
+    });
+  });
+
+  const totalMissing = missingGroup.length + missingKO.length;
+
+  let html = `<div style="margin-bottom:10px;font-size:13px;">
+    <strong>${name}</strong> — ${totalMissing===0?'<span style="color:#86EFAC">✓ No le falta nada, todo está completo</span>':`<span style="color:#FCA5A5">⚠ Le faltan ${totalMissing} predicciones</span>`}
+  </div>`;
+
+  if(missingGroup.length){
+    html += `<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:10px">⚽ Faltan en Grupos (${missingGroup.length})</div>`;
+    html += missingGroup.map(t=>`<div style="font-size:12px;color:var(--muted2);padding:3px 0;border-bottom:1px solid var(--border)">${t}</div>`).join('');
+  }
+  if(missingKO.length){
+    html += `<div style="font-size:11px;font-weight:700;color:#FF8080;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;margin-top:10px">🏟 Faltan/incompletas en Llaves (${missingKO.length})</div>`;
+    html += missingKO.map(t=>`<div style="font-size:12px;color:var(--muted2);padding:3px 0;border-bottom:1px solid var(--border)">${t}</div>`).join('');
+  }
+
+  out.innerHTML = html;
+}
+window.runDiagnostic = runDiagnostic;
 
 async function changeAccessCode(){
   const v=document.getElementById('new-code-input').value.trim().toUpperCase();
@@ -2243,21 +2319,36 @@ function buildStats(){
 
   // Per-user stats — now combines group stage AND all KO phases so the numbers
   // keep moving once the group stage ends instead of freezing there.
+  //
+  // IMPORTANT: "jugados" (and koJugados/penJugados) must be the SAME denominator
+  // for every player — the total number of matches that already have a real
+  // result — regardless of whether that specific player filled in a prediction
+  // or not. If someone forgot to predict a match, it should count as a MISS
+  // (0 points, breaks their streak), not simply vanish from their denominator.
+  // Otherwise players end up being compared against different totals, which
+  // looks unfair and confusing side by side (e.g. 68/92 vs 63/90).
+  const totalGroupMatchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]).length;
+  let totalKoMatchesWithResult = 0;
+  KO_PHASES.forEach(ph=>{ ph.matches.forEach(m=>{ if(state.results[m.id]) totalKoMatchesWithResult++; }); });
+  let totalPenMatchesWithResult = 0;
+  KO_PHASES.forEach(ph=>{ ph.matches.forEach(m=>{ if(state.results[m.id]&&state.results[m.id].penWinner) totalPenMatchesWithResult++; }); });
+
   const userStats = users.map(u=>{
     const preds = u.predictions||{};
     const koPreds = u.koPreds||{};
-    let exactos=0, cuatros=0, soloResultado=0, resultados=0, jugados=0;
-    let koAciertos=0, koJugados=0; // "llave correcta" tracking (equipo en posición), separate category
-    let penAciertos=0, penJugados=0; // penalty shootout picks, its own separate category
+    let exactos=0, cuatros=0, soloResultado=0, resultados=0;
+    let koAciertos=0; // "llave correcta" tracking (equipo en posición), separate category
+    let penAciertos=0; // penalty shootout picks, its own separate category
     let curStreak=0, maxStreak=0;
 
-    // Group stage matches (chronological order matters for streak calc)
+    // Group stage matches (chronological order matters for streak calc).
+    // Every match with a real result counts toward the denominator, whether
+    // or not the player predicted it — an unfilled prediction is simply a miss.
     const groupMatchesWithResult = ALL_MATCHES_GROUP.filter(m=>state.results[m.id]);
     groupMatchesWithResult.forEach(m=>{
       const pred=preds[m.id];
       const res=state.results[m.id];
-      if(!pred||pred.s1===undefined||pred.s1==='') return;
-      jugados++;
+      if(!pred||pred.s1===undefined||pred.s1===''){ curStreak=0; return; } // missed prediction = miss, still counted below
       const sc=scoreGroup(pred,res);
       if(sc===5){exactos++;resultados++;curStreak++;}
       else if(sc===4){cuatros++;resultados++;curStreak++;}
@@ -2271,21 +2362,23 @@ function buildStats(){
     // stats keep accumulating across the whole tournament. "Llave correcta" (did
     // they pick the right team/teams to advance) is tracked separately in
     // koAciertos, and penalty shootout picks are their own separate category —
-    // none of these three get mixed together.
+    // none of these three get mixed together. Same rule applies: unfilled
+    // predictions still count in the shared denominator, as misses.
     KO_PHASES.forEach(ph=>{
       ph.matches.forEach(m=>{
         const res=state.results[m.id];
+        if(!res) return; // no result yet — doesn't count in anyone's denominator
         const pred=koPreds[m.id];
-        if(!res || !pred || !pred.n1 || !pred.n2) return;
+        const hasPred = pred && pred.n1 && pred.n2;
 
-        koJugados++;
-        const sc=scoreKO(pred,res,ph.pts);
-        if(sc>0){koAciertos++;}
+        if(hasPred){
+          const sc=scoreKO(pred,res,ph.pts);
+          if(sc>0){koAciertos++;}
+        }
 
         // Scoreline classification (mirrors group-stage 3/4/5pt categories)
-        const cls = classifyKOScore(pred,res);
+        const cls = hasPred ? classifyKOScore(pred,res) : null;
         if(cls){
-          jugados++;
           if(cls==='exacto'){exactos++;resultados++;curStreak++;}
           else if(cls==='parcial'){cuatros++;resultados++;curStreak++;}
           else if(cls==='solo_resultado'){soloResultado++;resultados++;curStreak++;}
@@ -2297,11 +2390,14 @@ function buildStats(){
         // Penalty shootout pick tracking — own separate category, never mixed
         // into exactos/cuatros/resultados above.
         if(res.penWinner){
-          penJugados++;
-          if(pred.penPick===res.penWinner) penAciertos++;
+          if(hasPred && pred.penPick===res.penWinner) penAciertos++;
         }
       });
     });
+
+    const jugados = totalGroupMatchesWithResult + totalKoMatchesWithResult;
+    const koJugados = totalKoMatchesWithResult;
+    const penJugados = totalPenMatchesWithResult;
 
     const pts=calcPts(u);
     return{
