@@ -2595,18 +2595,51 @@ function buildFinalStats(){
   if(biggestTotalGoals) biggestTotalGoals.exactWinners = whoGotExact(biggestTotalGoals);
   if(biggestMargin) biggestMargin.exactWinners = whoGotExact(biggestMargin);
 
-  // ── F. MVP del torneo — combina rankings de puntos, % acierto, exactos y racha ──
+  // ── F. MVP del torneo — combina rankings de las 5 categorías principales ──
+  // Usa "competition ranking": si varios empatan en un valor, TODOS reciben la
+  // misma posición (ej. 3 empatados en 2do lugar = rank 2 para los 3), y el
+  // siguiente jugador salta directo a la posición que le corresponde después
+  // de los empatados (ej. rank 5, no rank 3). Menor suma de posiciones = MVP.
+  function assignCompetitionRanks(sortedDescArray, key){
+    const ranks={};
+    for(let i=0;i<sortedDescArray.length;i++){
+      if(i>0 && sortedDescArray[i][key]===sortedDescArray[i-1][key]){
+        ranks[sortedDescArray[i].name]=ranks[sortedDescArray[i-1].name];
+      } else {
+        ranks[sortedDescArray[i].name]=i+1;
+      }
+    }
+    return ranks;
+  }
+
   let mvp=null;
   if(baseStats && baseStats.userStats.length){
     const byTotal=[...baseStats.userStats].sort((a,b)=>b.total-a.total);
     const byPct=[...baseStats.userStats].sort((a,b)=>b.pctAcierto-a.pctAcierto);
     const byExact=[...baseStats.userStats].sort((a,b)=>b.exactos-a.exactos);
+    const byCuatro=[...baseStats.userStats].sort((a,b)=>b.cuatros-a.cuatros);
     const byStreak=[...baseStats.userStats].sort((a,b)=>b.maxStreak-a.maxStreak);
-    const rankOf=(arr,name)=>arr.findIndex(u=>u.name===name)+1;
-    const combined=baseStats.userStats.map(u=>{
-      const r1=rankOf(byTotal,u.name), r2=rankOf(byPct,u.name), r3=rankOf(byExact,u.name), r4=rankOf(byStreak,u.name);
-      return{name:u.name, score:r1+r2+r3+r4, r1,r2,r3,r4, total:u.total, pctAcierto:u.pctAcierto, exactos:u.exactos, maxStreak:u.maxStreak};
+
+    const ranksTotal=assignCompetitionRanks(byTotal,'total');
+    const ranksPct=assignCompetitionRanks(byPct,'pctAcierto');
+    const ranksExact=assignCompetitionRanks(byExact,'exactos');
+    const ranksCuatro=assignCompetitionRanks(byCuatro,'cuatros');
+    const ranksStreak=assignCompetitionRanks(byStreak,'maxStreak');
+
+    let combined=baseStats.userStats.map(u=>{
+      const r1=ranksTotal[u.name], r2=ranksPct[u.name], r3=ranksExact[u.name], r4=ranksCuatro[u.name], r5=ranksStreak[u.name];
+      return{
+        name:u.name, score:r1+r2+r3+r4+r5, r1,r2,r3,r4,r5,
+        total:u.total, pctAcierto:u.pctAcierto, exactos:u.exactos, cuatros:u.cuatros, maxStreak:u.maxStreak
+      };
     }).sort((a,b)=>a.score-b.score);
+
+    // Apply competition ranking to the final MVP position too (ties share position)
+    for(let i=0;i<combined.length;i++){
+      if(i>0 && combined[i].score===combined[i-1].score) combined[i].position=combined[i-1].position;
+      else combined[i].position=i+1;
+    }
+
     mvp=combined[0];
     mvp.breakdown=combined;
   }
@@ -2636,13 +2669,41 @@ function renderFinalStats(){
     html+=`<div style="background:linear-gradient(160deg,rgba(212,175,55,0.12) 0%,var(--surface) 100%);border:1px solid rgba(212,175,55,0.4);border-radius:16px;padding:20px;margin-bottom:16px;text-align:center;">
       <div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:6px">🏅 MVP DEL TORNEO</div>
       <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--white);letter-spacing:.04em;margin-bottom:8px">${fs.mvp.name}</div>
-      <div style="display:flex;justify-content:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted2);">
-        <span>🏆 Total: <strong style="color:var(--gold)">${fs.mvp.total}pts</strong></span>
-        <span>✅ Acierto: <strong style="color:#86EFAC">${fs.mvp.pctAcierto}%</strong></span>
-        <span>🎯 Exactos: <strong style="color:#FCA87A">${fs.mvp.exactos}</strong></span>
-        <span>🔥 Racha: <strong style="color:#93C5FD">${fs.mvp.maxStreak}</strong></span>
+      <div style="display:flex;justify-content:center;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted2);">
+        <span>🏆 Puntos: <strong style="color:var(--gold)">${fs.mvp.total}</strong> <span style="color:var(--muted);font-size:10px">(#${fs.mvp.r1})</span></span>
+        <span>✅ Acierto: <strong style="color:#86EFAC">${fs.mvp.pctAcierto}%</strong> <span style="color:var(--muted);font-size:10px">(#${fs.mvp.r2})</span></span>
+        <span>🎯 Exactos: <strong style="color:#FCA87A">${fs.mvp.exactos}</strong> <span style="color:var(--muted);font-size:10px">(#${fs.mvp.r3})</span></span>
+        <span>🥈 Parciales: <strong style="color:#93C5FD">${fs.mvp.cuatros}</strong> <span style="color:var(--muted);font-size:10px">(#${fs.mvp.r4})</span></span>
+        <span>🔥 Racha: <strong style="color:#93C5FD">${fs.mvp.maxStreak}</strong> <span style="color:var(--muted);font-size:10px">(#${fs.mvp.r5})</span></span>
       </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:8px">Calculado combinando el ranking de puntos totales, % de acierto, marcadores exactos y racha máxima</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">Suma de posiciones en las 5 categorías — menor suma gana. Empates comparten posición.</div>
+    </div>`;
+
+    html+=`<div style="margin-bottom:16px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">📋 Ranking MVP completo</div>
+      <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:520px;">
+        <tr style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          <td style="padding:5px 8px">#</td><td style="padding:5px 8px">Jugador</td>
+          <td style="padding:5px 8px;text-align:center">Puntos</td>
+          <td style="padding:5px 8px;text-align:center">% Acierto</td>
+          <td style="padding:5px 8px;text-align:center">Exactos</td>
+          <td style="padding:5px 8px;text-align:center">Parciales</td>
+          <td style="padding:5px 8px;text-align:center">Racha</td>
+          <td style="padding:5px 8px;text-align:center">Suma</td>
+        </tr>
+        ${fs.mvp.breakdown.map((u)=>`<tr style="border-top:1px solid var(--border)">
+          <td style="padding:6px 8px;color:${u.position<=3?colors[u.position-1]:'var(--muted)'};font-weight:700">${u.position}</td>
+          <td style="padding:6px 8px;font-weight:600">${u.name}</td>
+          <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.total} <span style="color:var(--muted);font-size:10px">#${u.r1}</span></td>
+          <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.pctAcierto}% <span style="color:var(--muted);font-size:10px">#${u.r2}</span></td>
+          <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.exactos} <span style="color:var(--muted);font-size:10px">#${u.r3}</span></td>
+          <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.cuatros} <span style="color:var(--muted);font-size:10px">#${u.r4}</span></td>
+          <td style="padding:6px 8px;text-align:center;color:var(--muted2)">${u.maxStreak} <span style="color:var(--muted);font-size:10px">#${u.r5}</span></td>
+          <td style="padding:6px 8px;text-align:center;color:var(--gold);font-weight:700;font-family:'Bebas Neue',sans-serif;font-size:15px">${u.score}</td>
+        </tr>`).join('')}
+      </table>
+      </div>
     </div>`;
   }
 
@@ -3184,8 +3245,8 @@ function downloadFinalReport(){
     <td>${m.name}</td><td>${m.phase}</td><td class="pts">${m.pct}%</td><td style="font-size:11px;color:#86EFAC">${m.winners.join(', ')||'—'}</td>
   </tr>`).join('');
 
-  const mvpBreakdownRows = fs.mvp && fs.mvp.breakdown ? fs.mvp.breakdown.slice(0,10).map((u,i)=>`<tr class="${i===0?'gold':i===1?'silver':i===2?'bronze':''}">
-    <td>${i+1}</td><td>${u.name}</td><td class="pts">${u.total}pts</td><td>${u.pctAcierto}%</td><td>${u.exactos}</td><td>${u.maxStreak}🔥</td>
+  const mvpBreakdownRows = fs.mvp && fs.mvp.breakdown ? fs.mvp.breakdown.map((u)=>`<tr class="${u.position===1?'gold':u.position===2?'silver':u.position===3?'bronze':''}">
+    <td>${u.position}</td><td>${u.name}</td><td class="pts">${u.total}</td><td>${u.pctAcierto}%</td><td>${u.exactos}</td><td>${u.cuatros}</td><td>${u.maxStreak}🔥</td><td class="pts">${u.score}</td>
   </tr>`).join('') : '';
 
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
@@ -3236,9 +3297,10 @@ function downloadFinalReport(){
     <div class="mvp-label">🏅 MVP del Torneo</div>
     <div class="mvp-name">${fs.mvp.name}</div>
     <div class="mvp-stats">
-      <span>Total: <strong>${fs.mvp.total}pts</strong></span>
+      <span>Puntos: <strong>${fs.mvp.total}</strong></span>
       <span>Acierto: <strong>${fs.mvp.pctAcierto}%</strong></span>
       <span>Exactos: <strong>${fs.mvp.exactos}</strong></span>
+      <span>Parciales: <strong>${fs.mvp.cuatros}</strong></span>
       <span>Racha: <strong>${fs.mvp.maxStreak}🔥</strong></span>
     </div>
   </div>`:''}
@@ -3252,7 +3314,7 @@ function downloadFinalReport(){
 
   <div class="content">
     ${fs.mvp?`<div class="grid" style="grid-template-columns:1fr">
-      ${tableSection('🏅 Ranking MVP — combinado (puntos + % acierto + exactos + racha)','#D4AF37',mvpBreakdownRows,['#','Jugador','Puntos','% Acierto','Exactos','Racha'])}
+      ${tableSection('🏅 Ranking MVP — combinado (5 categorías)','#D4AF37',mvpBreakdownRows,['#','Jugador','Puntos','% Acierto','Exactos','Parciales','Racha','Suma'])}
     </div>`:''}
     <div class="grid">
       ${tableSection('✅ % de acierto total — ranking completo','#86EFAC',pctRows,['#','Jugador','Aciertos','% Acierto'])}
