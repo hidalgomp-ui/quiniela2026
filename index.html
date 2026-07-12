@@ -517,6 +517,12 @@ body{background:var(--navy3);color:var(--text);font-family:'Inter',sans-serif;fo
       <div id="diag-results"></div>
     </div>
     <div class="adm-sec">
+      <div class="adm-title">🔧 Reparar Cuartos Invertidos (M98/M99)</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Antes de una corrección de bracket, M98 y M99 estaban cruzados. Si alguien predijo o si cargaste resultados de esos dos partidos ANTES del fix, sus equipos pueden haber quedado guardados intercambiados. Esta herramienta detecta a quién le pasó esto y lo corrige automáticamente — para todos los jugadores y para el resultado real, en un solo click.</div>
+      <button class="sv-btn" style="background:rgba(200,16,46,0.1);border-color:rgba(200,16,46,0.3);color:#FCA5A5" onclick="repairSwappedQuarterfinals()">🔧 Detectar y Reparar</button>
+      <div id="repair-results" style="margin-top:10px;"></div>
+    </div>
+    <div class="adm-sec">
       <div class="adm-title">🔀 Fusionar Jugadores Duplicados</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Combina las predicciones de dos cuentas del mismo jugador en una sola. Los datos de la cuenta "correcta" tienen prioridad si hay conflicto en el mismo partido; lo que le falte se completa con la cuenta duplicada. Al final, la cuenta duplicada se elimina.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -2054,6 +2060,87 @@ async function deleteResult(id){
   toast(`Resultado de ${id} borrado 🗑`,'ok');
   renderAdmin();renderLeaderboard();renderSummary();renderAdminStats();renderPartidos();
 }
+
+// ── REPARAR M98/M99 INVERTIDOS ──────────────────────────────────
+// Antes de corregir el bracket, M98 (rama de España) y M99 (rama de
+// Inglaterra) tenían sus equipos cruzados. Cualquier predicción o resultado
+// guardado ANTES del fix pudo quedar con los equipos intercambiados entre
+// esos dos partidos. Esta herramienta detecta automáticamente, para el
+// resultado real y para CADA jugador, si sus datos de M98/M99 corresponden
+// en realidad al partido contrario, y los intercambia — sin tocar nada que
+// ya esté correcto.
+async function repairSwappedQuarterfinals(){
+  if(!confirm('¿Detectar y reparar automáticamente los datos de M98/M99 invertidos? Esto revisa el resultado real y las predicciones de TODOS los jugadores.')) return;
+
+  const out = document.getElementById('repair-results');
+  out.innerHTML = '<div style="color:var(--muted);font-size:12px">Analizando...</div>';
+
+  // Equipos correctos esperados según los resultados reales de Octavos ya cargados
+  const t98a = resolveKOSlot('W_M93', state.results, {}, []);
+  const t98b = resolveKOSlot('W_M94', state.results, {}, []);
+  const t99a = resolveKOSlot('W_M91', state.results, {}, []);
+  const t99b = resolveKOSlot('W_M92', state.results, {}, []);
+  const expected98 = [t98a?.name, t98b?.name].filter(Boolean);
+  const expected99 = [t99a?.name, t99b?.name].filter(Boolean);
+
+  if(expected98.length<2 || expected99.length<2){
+    out.innerHTML = '<div style="color:var(--orange);font-size:12px">⚠ Aún no hay resultados suficientes de Octavos para saber los equipos esperados de M98/M99.</div>';
+    return;
+  }
+
+  function matchesPair(n1,n2,pair){
+    if(!n1||!n2) return false;
+    return (n1===pair[0]&&n2===pair[1]) || (n1===pair[1]&&n2===pair[0]);
+  }
+
+  let fixedCount = 0;
+  const fixedNames = [];
+  const {deleteField} = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+
+  // 1. Resultado real (admin)
+  const res98 = state.results['M98'];
+  const res99 = state.results['M99'];
+  const res98Swapped = res98 && matchesPair(res98.n1,res98.n2,expected99) && !matchesPair(res98.n1,res98.n2,expected98);
+  const res99Swapped = res99 && matchesPair(res99.n1,res99.n2,expected98) && !matchesPair(res99.n1,res99.n2,expected99);
+  if(res98Swapped || res99Swapped){
+    const updates = {};
+    if(res99) updates['M98'] = res99; else updates['M98'] = deleteField();
+    if(res98) updates['M99'] = res98; else updates['M99'] = deleteField();
+    await updateDoc(resultsRef(), updates);
+    if(res99) state.results['M98']=res99; else delete state.results['M98'];
+    if(res98) state.results['M99']=res98; else delete state.results['M99'];
+    fixedCount++;
+    fixedNames.push('Resultado real (admin)');
+  }
+
+  // 2. Predicciones de cada jugador
+  for(const u of state.users){
+    if(u.name==='Admin') continue;
+    const kp = u.koPreds||{};
+    const p98 = kp['M98'];
+    const p99 = kp['M99'];
+    const p98Swapped = p98 && p98.n1 && p98.n2 && matchesPair(p98.n1,p98.n2,expected99) && !matchesPair(p98.n1,p98.n2,expected98);
+    const p99Swapped = p99 && p99.n1 && p99.n2 && matchesPair(p99.n1,p99.n2,expected98) && !matchesPair(p99.n1,p99.n2,expected99);
+    if(p98Swapped || p99Swapped){
+      const newKoPreds = {...kp};
+      if(p99) newKoPreds['M98']={...p99}; else delete newKoPreds['M98'];
+      if(p98) newKoPreds['M99']={...p98}; else delete newKoPreds['M99'];
+      await saveUserToCloud({...u, koPreds:newKoPreds});
+      fixedCount++;
+      fixedNames.push(u.name);
+    }
+  }
+
+  out.innerHTML = fixedCount>0
+    ? `<div style="color:#86EFAC;font-size:12px">✓ Reparados ${fixedCount} registros: ${fixedNames.join(', ')}</div>`
+    : `<div style="color:#86EFAC;font-size:12px">✓ No se encontró nada invertido — todo estaba correcto.</div>`;
+
+  renderAdmin();
+  renderLeaderboard();
+  renderAdminStats();
+  toast('Reparación completada ✓','ok');
+}
+window.repairSwappedQuarterfinals = repairSwappedQuarterfinals;
 
 function showPendingChampions(){
   const pending = state.users.filter(u=>u.name!=='Admin'&&!u.champion);
