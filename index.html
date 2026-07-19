@@ -1144,7 +1144,7 @@ function calcPts(user){
       ko+=sc;
     });
   });
-  if(user.champion&&state.results['__champion__']&&user.champion===state.results['__champion__'])champ=10;
+  if(user.champion&&state.results['champion']&&user.champion===state.results['champion'])champ=10;
   return{grp,ko,pen,champ,total:grp+ko+pen+champ};
 }
 
@@ -1165,7 +1165,7 @@ function calcPtsByPhase(user){
     byPhase[ph.id] = phasePts;
   });
 
-  byPhase['champion'] = (user.champion && state.results['__champion__'] && user.champion===state.results['__champion__']) ? 10 : 0;
+  byPhase['champion'] = (user.champion && state.results['champion'] && user.champion===state.results['champion']) ? 10 : 0;
 
   const total = Object.values(byPhase).reduce((a,b)=>a+b,0);
   return { byPhase, total };
@@ -1762,7 +1762,7 @@ function renderSummaryContent(){
   }
   if(!users.length){el.innerHTML='<div class="empty">Sin jugadores registrados.</div>';return;}
   if(sumActivePhase==='champ'){
-    const champResult=state.results['__champion__'];
+    const champResult=state.results['champion'];
     let html=`<div class="sum-wrap"><table class="sum-table"><thead><tr><th class="match-col">Jugador</th><th>Su pick 👑</th><th>Resultado</th><th>Pts</th></tr></thead><tbody>`;
     users.forEach(u=>{
       const pick=u.champion||'';const f=ALL_TEAMS_FLAGS[pick]||'';
@@ -1835,7 +1835,7 @@ function renderSumGroupTable(g){
 // ── CHAMPION ────────────────────────────────────────────────────
 function renderChampion(){
   if(!currentUser)return;
-  const champResult=state.results['__champion__'];
+  const champResult=state.results['champion'];
   const cur=document.getElementById('champ-current');
   const locked = !isAdmin && !isPhaseOpen('champion');
 
@@ -1867,9 +1867,16 @@ function renderChampion(){
 }
 function pickChampion(n){currentUser.champion=n;renderChampion();}
 async function saveChampion(){
-  const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
-  u.champion=currentUser.champion;await saveUserToCloud(u);
-  toast('Campeón guardado 👑','ok');renderLeaderboard();
+  try{
+    const u=state.users.find(u=>u.name===currentUser.name)||currentUser;
+    u.champion=currentUser.champion;
+    await saveUserToCloud(u);
+    toast('Campeón guardado 👑','ok');
+    renderLeaderboard();
+  }catch(e){
+    console.error('Error guardando campeón:',e);
+    toast('Error guardando campeón — revisa la consola (F12)','err');
+  }
 }
 
 // ── ADMIN ─────────────────────────────────────────────────────
@@ -1974,7 +1981,7 @@ function renderAdmin(){
 
   // Champ select
   const sel=document.getElementById('champ-result-select');
-  sel.innerHTML='<option value="">— Campeón del torneo —</option>'+Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>`<option value="${n}" ${state.results['__champion__']===n?'selected':''}>${f} ${n}</option>`).join('');
+  sel.innerHTML='<option value="">— Campeón del torneo —</option>'+Object.entries(ALL_TEAMS_FLAGS).map(([n,f])=>`<option value="${n}" ${state.results['champion']===n?'selected':''}>${f} ${n}</option>`).join('');
 
   // Stats
   renderAdminStats();
@@ -2240,7 +2247,7 @@ async function saveKOResult(id){
 async function saveChampionResult(){
   const val=document.getElementById('champ-result-select').value;
   if(!val){toast('Selecciona un equipo','err');return;}
-  await saveResultToCloud('__champion__',val);toast('Campeón registrado 🏆','ok');renderLeaderboard();
+  await saveResultToCloud('champion',val);toast('Campeón registrado 🏆','ok');renderLeaderboard();
 }
 async function deleteUser(name){
   if(!confirm('¿Eliminar a '+name+'?'))return;
@@ -2953,7 +2960,7 @@ function renderPhaseStatsContent(){
   // Check if this phase has any results loaded yet, to give context
   let hasAnyResult = false;
   if(_phaseStatsActive==='grupos') hasAnyResult = ALL_MATCHES_GROUP.some(m=>state.results[m.id]);
-  else if(_phaseStatsActive==='champion') hasAnyResult = !!state.results['__champion__'];
+  else if(_phaseStatsActive==='champion') hasAnyResult = !!state.results['champion'];
   else { const ph=KO_PHASES.find(p=>p.id===_phaseStatsActive); hasAnyResult = ph ? ph.matches.some(m=>state.results[m.id]) : false; }
 
   let html = `<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">🏆 Ranking — ${phaseLabels[_phaseStatsActive]}</div>`;
@@ -3150,7 +3157,7 @@ function renderStatsTo(elId){
         <span style="font-size:18px">${ALL_TEAMS_FLAGS[n]||'🏳'}</span>
         <span style="font-weight:600">${n}</span>
         <span style="color:var(--muted);font-size:11px">${c} jugador${c>1?'es':''}</span>
-        ${state.results['__champion__']===n?'<span style="color:#86EFAC;font-size:10px;font-weight:700">✓ CAMPEÓN</span>':''}
+        ${state.results['champion']===n?'<span style="color:#86EFAC;font-size:10px;font-weight:700">✓ CAMPEÓN</span>':''}
       </div>`).join('')}
     </div>
   </div>`:''}`;
@@ -3212,7 +3219,7 @@ function downloadReport(){
     <span class="flag">${ALL_TEAMS_FLAGS[n]||'🏳'}</span>
     <span class="cname">${n}</span>
     <span class="ccount">${c} jugador${c>1?'es':''}</span>
-    ${state.results['__champion__']===n?'<span class="winner">✓ CAMPEÓN</span>':''}
+    ${state.results['champion']===n?'<span class="winner">✓ CAMPEÓN</span>':''}
   </div>`).join('');
 
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
@@ -3490,7 +3497,7 @@ function downloadMyQuiniela(){
   });
 
   const pts = calcPts(user);
-  const champResult = state.results['__champion__'];
+  const champResult = state.results['champion'];
   const champFlag = ALL_TEAMS_FLAGS[user.champion||'']||'';
   const champCorrect = champResult && user.champion === champResult;
 
